@@ -1,0 +1,16 @@
+# Dependencies / build output
+node_modules/
+dist/
+build/
+release/
+*.tsbuildinfo
+docs/release-*.md
+
+# Rust
+src-tauri/target/
+src-tauri/target-*/
+src-tauri/gen/
+
+# Local runtime data (use FILEZILLA_RS_CONFIG_DIR during development)
+.appdata/
+.cache/
