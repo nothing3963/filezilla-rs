@@ -1,0 +1,75 @@
+[package]
+name = "filezilla-rs"
+version = "0.1.0"
+description = "Modern Rust + Tauri rewrite of the FileZilla FTP/FTPS/SFTP client"
+authors = ["FileZilla Modern contributors"]
+edition = "2021"
+rust-version = "1.88"
+license = "GPL-3.0-or-later"
+
+[lib]
+name = "filezilla_rs_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["devtools", "tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+async-trait = "0.1"
+futures-util = "0.3"
+
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde", "clock"] }
+encoding_rs = "0.8"
+quick-xml = { version = "0.37", features = ["serialize"] }
+base64 = "0.22"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# FTP / FTPS.  rustls (ring) keeps FTPS independent from the platform TLS
+# stack and works on every supported OS.
+suppaftp = { version = "12", features = ["tokio", "tokio-rustls-ring", "deprecated"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = "0.26"
+webpki-roots = "1"
+rustls-pki-types = "1"
+
+# SFTP
+russh = { version = "0.64", default-features = false, features = ["ring", "flate2", "rsa"] }
+russh-sftp = "3"
+
+# Windows Credential Manager (passwords never touch the JSON store)
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", default-features = false, features = ["windows-native"] }
+window-vibrancy = "0.8"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["linux-native"] }
+
+# MSVC 14.51 can fail C dependency builds with /Z7 (D8050).  Keep debug
+# info for this crate but not for dependencies.
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

@@ -1,0 +1,90 @@
+﻿UNIX	01-unix-std dir	512	True	False	dr-xr-xr-x	root other		dr-xr-xr-x   2 root     other        512 Apr  8  1994 01-unix-std dir
+UNIX	02-unix-std file	531	False	False	-rw-r--r--	root other		-rw-r--r--   1 root     other        531 3 29 03:26 02-unix-std file
+UNIX	03-unix-nogroup dir	512	True	False	dr-xr-xr-x	root		dr-xr-xr-x   2 root                  512 Apr  8  1994 03-unix-nogroup dir
+UNIX	04-unix-std link	7	True	True	lrwxrwxrwx	root other	usr/bin	lrwxrwxrwx   1 root     other          7 Jan 25 00:17 04-unix-std link -> usr/bin
+UNIX	05-unix-date file	531	False	False	-rw-r--r--	root other		-rw-r--r--   1 root     other        531 09-26 2000 05-unix-date file
+UNIX	06-unix-date file	531	False	False	-rw-r--r--	root other		-rw-r--r--   1 root     other        531 09-26 13:45 06-unix-date file
+UNIX	07-unix-date file	531	False	False	-rw-r--r--	root other		-rw-r--r--   1 root     other        531 2005-06-07 21:22 07-unix-date file
+UNIX	08-unix-namedsize file		False	False	-rw-r--r--	root other		-rw-r--r--   1 root     other  33.5k Oct 5 21:22 08-unix-namedsize file
+UNIX	09-netware dir	512	True	False	d [R----F--]	supervisor		d [R----F--] supervisor            512       Jan 16 18:53    09-netware dir
+UNIX	10-netware file	214059	False	False	- [R----F--]	rhesus		- [R----F--] rhesus             214059       Oct 20 15:27    10-netware file
+UNIX	11-netpresenz file	1392298	False	False	-------r--	1391972		-------r--         326  1391972  1392298 Nov 22  1995 11-netpresenz file
+UNIX	12-netpresenz dir	2	True	False	drwxrwxr-x	folder		drwxrwxr-x               folder        2 May 10  1996 12-netpresenz dir
+UNIX	13-unix-domain file	531	False	False	-rw-r--r--	group domain user		-rw-r--r--   1 group domain user 531 Jan 29 03:26 13-unix-domain file
+UNIX	14-eplf file	280	False	False	755			+i8388621.48594,m825718503,r,s280,up755	14-eplf file
+UNIX	15-eplf dir	-1	True	False				+i8388621.50690,m824255907,/,	15-eplf dir
+UNIX	16-dos-dateambiguous dir	-1	True	False				04-27-00  12:09PM       <DIR>          16-dos-dateambiguous dir
+UNIX	17-dos-dateambiguous file	589	False	False				04-06-00  03:47PM                  589 17-dos-dateambiguous file
+UNIX	18-dos-longyear dir	-1	True	False				2002-09-02  18:48       <DIR>          18-dos-longyear dir
+UNIX	19-dos-longyear file	9730	False	False				2002-09-02  19:06                9,730 19-dos-longyear file
+UNIX	20-unix-numerical file	12345	False	False	0100644	500 101		0100644   500  101   12345    123456789       20-unix-numerical file
+UNIX	21-vshell-old file	206876	False	False				206876  Apr 04, 2000 21:06 21-vshell-old file
+UNIX	22-vshell-old dir	0	True	False				0  Dec 12, 2002 02:13 22-vshell-old dir/
+UNIX	23-vshell-new file	9	False	False	-rwxr-xr-x	user group		-rwxr-xr-x    1 user group        9 Oct 08, 2002 09:47 23-vshell-new file
+UNIX	24-os2 file	36611	False	False				36611      A    04-23-103  10:57  24-os2 file
+UNIX	25-os2 file	1123	False	False				 1123      A    07-14-99   12:37  25-os2 file
+UNIX	26-os2 dir	0	True	False				    0 DIR       02-11-103  16:15  26-os2 dir
+UNIX	27-os2 dir	1123	True	False				 1123 DIR  A    10-05-100  23:38  27-os2 dir
+UNIX	28-datetest-ger dir	2235	True	False	dr-xr-xr-x	root other		dr-xr-xr-x   2 root     other      2235 26. Juli, 20:10 28-datetest-ger dir
+UNIX	28b-datetest-hungarian dir	2235	True	False	dr-xr-xr-x	root other		dr-xr-xr-x   2 root     other      2235 szept 26 20:10 28b-datetest-hungarian dir
+UNIX	29-datetest-ger file	2235	False	False	-r-xr-xr-x	root other		-r-xr-xr-x   2 root     other      2235 2.   Okt.  2003 29-datetest-ger file
+UNIX	30-datetest file	2235	False	False	-r-xr-xr-x	root other		-r-xr-xr-x   2 root     other      2235 1999/10/12 17:12 30-datetest file
+UNIX	31-datetest file	2235	False	False	-r-xr-xr-x	root other		-r-xr-xr-x   2 root     other      2235 24-04-2003 17:12 31-datetest file
+UNIX	32-datatest-japanese file	8473	False	False	-rw-r--r--	root sys		-rw-r--r--   1 root       sys           8473  4�� 18�� 2003�N 32-datatest-japanese file
+UNIX	33-asian date file	0	False	False	-rwxrwxrwx	root staff		-rwxrwxrwx   1 root     staff          0 2003   3�� 20 33-asian date file
+UNIX	34-asian date file	2096	False	False	-r--r--r--	root root		-r--r--r-- 1 root root 2096 8� 17 08:52 34-asian date file
+UNIX	35-dotted-date file	96	False	False	-r-xr-xr-x	root root		-r-xr-xr-x   2 root  root  96 2004.07.15   35-dotted-date file
+UNIX	36-vms-dir	512	True	False	RWE,RWE,RE,RE	root,root		36-vms-dir.DIR;1  1 19-NOV-2001 21:41 [root,root] (RWE,RWE,RE,RE)
+UNIX	37-vms-file;1	79360	False	False				37-vms-file;1       155   2-JUL-2003 10:30:13.64
+UNIX	38-vms-notime-file;1	1024	False	False	RWED,RWED,RE,	IV2_XXX		38-vms-notime-file;1    2/8    7-JAN-2000    [IV2_XXX]   (RWED,RWED,RE,)
+UNIX	39-vms-notime-file;1	3072	False	False	RWED,RWED,RE,	PRONAS		39-vms-notime-file;1    6/8    15-JUI-2002    PRONAS   (RWED,RWED,RE,)
+UNIX	40-vms-multiline-file;1	87436288	False	False	RWED,RWED,RE,	FTP_CLIENT,SCOT		40-vms-multiline-file;1
+170774/170775     24-APR-2003 08:16:15  [FTP_CLIENT,SCOT]      (RWED,RWED,RE,)
+UNIX	41-vms-multiline-file;1	5120	False	False	RWED,RWED,RE,	FTP_CLIENT,SCOT		41-vms-multiline-file;1
+10     2-JUL-2003 10:30:08.59  [FTP_CLIENT,SCOT]      (RWED,RWED,RE,)
+UNIX	42-vms-alternate-field-order-file;1	512	False	False	RWE,RWE,RE,	SUMMARY		42-vms-alternate-field-order-file;1   [SUMMARY]    1/3     2-AUG-2006 13:05  (RWE,RWE,RE,)
+UNIX	43-vms-alternate-field-order-file;1	3229696	False	False	RWED,RWED,R,			43-vms-alternate-field-order-file;1       17-JUN-1994 17:25:37     6308/13     (RWED,RWED,R,)
+UNIX	44-ibm-as400 dir	77824	True	False		QSYS		QSYS            77824 02/23/00 15:09:55 *DIR 44-ibm-as400 dir/
+UNIX	45-ibm-as400-date file	77824	False	False		QSYS		QSYS            77824 23/02/00 15:09:55 *FILE 45-ibm-as400-date file
+UNIX	46-unix-concatsize file	123456	False	False	-r-xr-xr-x	longowner longgroup		-r-xr-xr-x longowner longgroup123456 Feb 12 17:20 46-unix-concatsize file
+UNIX	47_unix_shortdatemonth file	4512	False	False	-r-xr-xr-x	owner group		-r-xr-xr-x 2 owner group 4512 01-jun-99 47_unix_shortdatemonth file
+UNIX	48-nortel-wfftp-file	1014196	False	False				48-nortel-wfftp-file       1014196  06/03/04  Thur.   10:20:03
+UNIX	49-nortel-vxworks dir	2048	True	False				2048    Feb-28-1998  05:23:30   49-nortel-vxworks dir <DIR>
+UNIX	50-conent file	1294495	False	False	-C--E-----FTP	B BCC3I1 7670		-C--E-----FTP B BCC3I1       7670  1294495 Jan 13 07:42 50-conent file
+UNIX	51-OS-9 dir	85920	True	False	d-ewrewr	20.20		20.20 07/03/29 1026 d-ewrewr 2650 85920 51-OS-9 dir
+UNIX	52-swapped-daymonth dir	512	True	False	drwxr-xr-x	user group		drwxr-xr-x 3 user group 512 01 oct 2004 52-swapped-daymonth dir
+UNIX	53-noownergroup file	12	False	False	-r--r--r--			-r--r--r-- 0125039 12 Nov 11 2005 53-noownergroup file
+UNIX	54-asian date year first dir	512	True	False	drwxr-xr-x	root sys		drwxr-xr-x   5 root     sys          512 2005년  1월  6일 54-asian date year first dir
+UNIX	55-AS400.FILE	36864	False	False		QPGMR		QPGMR           36864 18.09.06 14:21:26 *FILE      55-AS400.FILE
+UNIX	56-VMS-complex-size;1	2048	False	False				56-VMS-complex-size;1 2KB 23-SEP-2005 14:57:07.27
+HPNONSTOP	57-HP_NonStop	528	False	False	"oooo"	255, 0		57-HP_NonStop 101 528 6-Apr-07 14:21:18 255, 0 "oooo"
+HPNONSTOP	58-HP_NonStop	528	False	False	"oooo"	255,255		58-HP_NonStop 101 528 6-Apr-07 14:21:18 255,255 "oooo"
+UNIX	59-localized-date-dir	1024	True	False	drwxr-xr-x	user sys		drwxr-xr-x 6 user sys 1024 30. Jan., 12:40 59-localized-date-dir
+UNIX	60-MVS.FILE	100	False	False				WYOSPT 3420   2003/05/21  1  200  FB      80  8053  PS  60-MVS.FILE
+UNIX	61-MVS.DATASET	-1	True	False				WPTA01 3290   2004/03/04  1    3  FB      80  3125  PO  61-MVS.DATASET
+UNIX	62-MVS-NONEDATE.DATASET	-1	True	False				NRP004 3390   **NONE**    1   15  NONE     0     0  PO  62-MVS-NONEDATE.DATASET
+UNIX	63-MVS.DATASET	-1	True	False				TSO005 3390   2005/06/06 213000 U 0 27998 PO 63-MVS.DATASET
+UNIX	64-mvs-file	-1	False	False				TSO004 3390   VSAM 64-mvs-file
+MVS	65-MVS-PDS-MEMBER	-1	False	False				65-MVS-PDS-MEMBER
+MVS	66-MVSPDSMEMBER	128	False	False				66-MVSPDSMEMBER 01.01 2004/06/22 2004/06/22 16:32   128   128    0 BOBY12
+MVS	67-MVSPDSMEMBER2	45832	False	False				67-MVSPDSMEMBER2 00B308 000411  00 FO                31    ANY
+MVS	68-MVSPDSMEMBER3	45832	False	False				68-MVSPDSMEMBER3 00B308 000411  00 FO        RU      ANY    24
+MVS	69-SOME.FILE	-1	False	False				Migrated				69-SOME.FILE
+ZVM	70-ZVMFILE.TRACE	6955	False	False		060191		70-ZVMFILE  TRACE   V        65      107        2 2005-10-04 15:28:42 060191
+UNIX	71-unix-dateless	512	True	False	drwxr-xr-x	slopri devlab		drwxr-xr-x 3 slopri devlab 512 71-unix-dateless
+UNIX	72-MLSD-file	1234	False	False				Type=file;mOdIfY=20081105165215;size=1234; 72-MLSD-file
+MVS	73-MSV-TAPE.FILE	-1	False	False				V43525 Tape                                             73-MSV-TAPE.FILE
+UNIX	74-MLSD-whitespace trailing	 	-1	False	False				Type=file; 74-MLSD-whitespace trailing	 
+UNIX		 75-MLSD-whitespace leading	-1	False	False				Type=file; 	 75-MLSD-whitespace leading
+UNIX	75 MLSD file with empty permissions	65718921	False	False	00	1179 1179		modify=20080426135501;perm=;size=65718921;type=file;unique=802U1066013B;UNIX.group=1179;UNIX.mode=00;UNIX.owner=1179; 75 MLSD file with empty permissions
+UNIX	76 MLSD symlink	-1	True	True			/foo	type=OS.unix=slink:/foo; 76 MLSD symlink
+UNIX	76b MLSD symlink	-1	True	True				type=OS.UNIX=symlink; 76b MLSD symlink
+UNIX	77 MLSD file no trailing semicolon after facts < mlst-07	-1	False	False				type=file 77 MLSD file no trailing semicolon after facts < mlst-07
+UNIX	77 MLSD symlink notarget	-1	True	True				type=OS.unix=slink; 77 MLSD symlink notarget
+UNIX	adsl TV 2009-07-22 08-25-10 78 mlsd file that can get parsed as unix.file	1365694195	False	False				size=1365694195;type=file;modify=20090722092510;	adsl TV 2009-07-22 08-25-10 78 mlsd file that can get parsed as unix.file
+UNIX	79-MVS.FILE	100	False	False				WYOSPT 3420   2003/05/21  1 ????  FB      80  8053  PS  79-MVS.FILE
+UNIX	80-MVS.FILE	100	False	False				GISBWI 3390   2011/08/25  2 ++++  FB     904 18080  PS  80-MVS.FILE
+UNIX	81-MVS.DIR	-1	True	False				WYOSPT 3420   2003/05/21  1 3 U 6447    6447  PO-E 81-MVS.DIR
+UNIX	2014 Invoices	0	True	False	drwxrwxrwx	0 0		drwxrwxrwx   1 0        0               0 29 Jul 02:27 2014 Invoices
+UNIX	MLSD pre-epoch	1234	False	False				Type=file;mOdIfY=19681105165215;size=1234; MLSD pre-epoch
+UNIX	alternate_midnight	3	False	False	-rw-------	99999999 0		-rw-------      1  99999999 0              3 Apr   4 24:00 alternate_midnight
