@@ -42,6 +42,7 @@
   "bookmarks.remove": "Премахване на отметка",
   "bookmarks.noPath": "Няма папка за запазване",
   "bookmarks.noRemote": "Първо се свържете с отдалечен сайт",
+  "bookmarks.siteMissing": "Сайтът на тази отметка вече не съществува",
   "search.title": "отдалечените папки",
   "search.subtitle": "Рекурсивно търсене на имена на файлове от текущата папка",
   "search.placeholder": "Името на файла съдържа…",

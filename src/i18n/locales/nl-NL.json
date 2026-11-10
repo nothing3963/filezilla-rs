@@ -42,6 +42,7 @@
   "bookmarks.remove": "Bladwijzer verwijderen",
   "bookmarks.noPath": "Er is geen map om op te slaan",
   "bookmarks.noRemote": "Maak eerst verbinding met een externe site",
+  "bookmarks.siteMissing": "De site van deze bladwijzer bestaat niet meer",
   "search.title": "Extern zoeken",
   "search.subtitle": "Bestandsnamen recursief zoeken vanaf de huidige map",
   "search.placeholder": "Bestandsnaam bevat…",

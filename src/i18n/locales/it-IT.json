@@ -42,6 +42,7 @@
   "bookmarks.remove": "Rimuovi segnalibro",
   "bookmarks.noPath": "Nessuna cartella da salvare",
   "bookmarks.noRemote": "Connetti prima un sito remoto",
+  "bookmarks.siteMissing": "Il sito di questo preferito non esiste più",
   "search.title": "Ricerca remota",
   "search.subtitle": "Cerca ricorsivamente i nomi file dalla cartella corrente",
   "search.placeholder": "Il nome file contiene…",

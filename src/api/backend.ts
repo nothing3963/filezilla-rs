@@ -77,8 +77,8 @@ export const api = {
   sitesImport: (path: string) => call<ImportOutcome>("sites_import", { path }),
   sitesImportAuto: () => call<AutoImportOutcome | null>("sites_import_auto"),
   sitesDetectAuto: () => call<DetectedSites | null>("sites_detect_auto"),
-  sitesExport: (path: string, includePasswords = false) =>
-    call<ExportOutcome>("sites_export", { path, includePasswords }),
+  sitesExport: (path: string, includePasswords = false, overwrite = false) =>
+    call<ExportOutcome>("sites_export", { path, includePasswords, overwrite }),
 
   groupCreate: (name: string, parentId?: string | null) =>
     call<SiteGroup>("group_create", { name, parentId: parentId ?? null }),

@@ -19,7 +19,7 @@ export TEMP="$TMPDIR"
 mkdir -p "$TMPDIR"
 export CARGO_HOME="$PWD/.cache/cargo-home"
 
-VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+VERSION="$(node scripts/get-version.mjs)"
 
 echo "[build] project : $PWD"
 echo "[build] TMP     : $TMPDIR"
@@ -36,20 +36,23 @@ mkdir -p "$OUT"
 cp "src-tauri/target/release/filezilla-rs" "$OUT/"
 
 copied=0
-for file in src-tauri/target/release/bundle/deb/*.deb; do
+# Only copy bundles matching the current version: the bundler does not clean
+# stale bundles from previous builds, so a bare *.deb glob would copy them too.
+for file in src-tauri/target/release/bundle/deb/*_${VERSION}_*.deb; do
   [ -e "$file" ] || continue
   cp "$file" "$OUT/"
   copied=$((copied + 1))
 done
-for file in src-tauri/target/release/bundle/appimage/*.AppImage; do
+for file in src-tauri/target/release/bundle/appimage/*_${VERSION}_*.AppImage; do
   [ -e "$file" ] || continue
   cp "$file" "$OUT/"
   copied=$((copied + 1))
 done
 
-# Require at least one install package; treat a missing one as a build failure.
+# Require at least one install package for this exact version; anything else
+# means the bundler did not produce the artifact we just asked for.
 if [ "$copied" -eq 0 ]; then
-  echo "[ERROR] No .deb or .AppImage bundle was produced." >&2
+  echo "[ERROR] No .deb or .AppImage bundle for version $VERSION was produced." >&2
   exit 1
 fi
 

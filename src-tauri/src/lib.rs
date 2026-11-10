@@ -127,7 +127,7 @@ pub fn run() {
                 "app",
                 format!(
                     "FileZilla Modern {} starting (Tauri {})",
-                    env!("CARGO_PKG_VERSION"),
+                    app.package_info().version,
                     tauri::VERSION
                 ),
             );
@@ -155,6 +155,25 @@ pub fn run() {
                 }
                 window.show()?;
                 let _ = window.set_focus();
+                // WebView2 treats F5 / Ctrl+R as browser accelerators and reloads
+                // the page before the DOM sees them, so in-app shortcuts such as
+                // F5 refresh never fire. Disable them; the React layer owns all
+                // keyboard bindings.
+                #[cfg(target_os = "windows")]
+                let _ = window.with_webview(|webview| {
+                    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+                    use windows_core::Interface;
+                    let settings3 = unsafe {
+                        let Ok(core) = webview.controller().CoreWebView2() else {
+                            return;
+                        };
+                        let Ok(settings) = core.Settings() else { return };
+                        settings.cast::<ICoreWebView2Settings3>().ok()
+                    };
+                    if let Some(settings3) = settings3 {
+                        let _ = unsafe { settings3.SetAreBrowserAcceleratorKeysEnabled(false) };
+                    }
+                });
             }
             Ok(())
         })

@@ -172,8 +172,10 @@ export interface AppStore {
   remoteForward: (tabId: string) => Promise<void>;
   remoteUp: (tabId: string) => Promise<void>;
   refreshRemote: (tabId?: string) => Promise<void>;
+  refreshAll: () => Promise<void>;
   setRemoteSelection: (tabId: string, selected: string[]) => void;
   toggleRemoteSort: (tabId: string, key: SortKey) => void;
+  setRemoteSort: (tabId: string, sort: PaneSort) => void;
 
   loadLocal: (path: string | null, mode: "push" | "replace" | "none") => Promise<void>;
   navigateLocal: (path: string | null) => Promise<void>;
@@ -183,6 +185,7 @@ export interface AppStore {
   refreshLocal: () => Promise<void>;
   setLocalSelection: (selected: string[]) => void;
   toggleLocalSort: (key: SortKey) => void;
+  setLocalSort: (sort: PaneSort) => void;
 
   promptNewFolder: (side: "local" | "remote") => void;
   promptRename: (side: "local" | "remote", item: RemoteEntry | LocalEntry) => void;
@@ -841,6 +844,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     await get().loadRemote(id, tab.remote.path, "none");
   },
 
+  async refreshAll() {
+    // A global refresh (toolbar / F5) must reload both panes so the local and
+    // remote trees stay in sync with what is actually on disk.
+    await Promise.all([get().refreshRemote(), get().refreshLocal()]);
+  },
+
   setRemoteSelection(tabId, selected) {
     set((state) => ({
       tabs: state.tabs.map((item) =>
@@ -855,6 +864,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const current = tab.remote.sort;
     const sort: PaneSort =
       current.key === key ? { key, dir: current.dir === 1 ? -1 : 1 } : { key, dir: 1 };
+    set((state) => ({
+      tabs: state.tabs.map((item) =>
+        item.id === tabId ? { ...item, remote: { ...item.remote, sort } } : item,
+      ),
+    }));
+  },
+
+  setRemoteSort(tabId, sort) {
     set((state) => ({
       tabs: state.tabs.map((item) =>
         item.id === tabId ? { ...item, remote: { ...item.remote, sort } } : item,
@@ -952,6 +969,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
         sort: current.key === key ? { key, dir: current.dir === 1 ? -1 : 1 } : { key, dir: 1 },
       },
     }));
+  },
+
+  setLocalSort(sort) {
+    set((state) => ({ local: { ...state.local, sort } }));
   },
 
   promptNewFolder(side) {

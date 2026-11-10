@@ -38,12 +38,18 @@ pub fn init(app: AppHandle) {
 }
 
 pub async fn ask(host: &str, port: u16, key_type: &str, fingerprint: &str) -> bool {
-    let id = format!("{host}:{port}|{key_type}");
+    // A uuid keeps concurrent prompts for the same host+port+key type from
+    // overwriting each other in the pending map.
+    let id = format!("{host}:{port}|{key_type}|{}", uuid::Uuid::new_v4());
     let Some(app) = pending().app.get() else {
         return false;
     };
     let (tx, rx) = oneshot::channel();
-    pending().requests.lock().unwrap().insert(id.clone(), tx);
+    pending()
+        .requests
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(id.clone(), tx);
     let prompt = HostKeyPrompt {
         id: id.clone(),
         host: host.to_string(),
@@ -52,19 +58,31 @@ pub async fn ask(host: &str, port: u16, key_type: &str, fingerprint: &str) -> bo
         fingerprint: fingerprint.to_string(),
     };
     if app.emit("ssh:hostkey", prompt).is_err() {
-        pending().requests.lock().unwrap().remove(&id);
+        pending()
+            .requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id);
         return false;
     }
     match tokio::time::timeout(Duration::from_secs(60), rx).await {
         Ok(Ok(accepted)) => accepted,
         _ => {
-            pending().requests.lock().unwrap().remove(&id);
+            pending()
+                .requests
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&id);
             false
         }
     }
 }
 
 pub fn resolve(id: &str, accepted: bool) -> bool {
-    let sender = pending().requests.lock().unwrap().remove(id);
+    let sender = pending()
+        .requests
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(id);
     sender.map(|tx| tx.send(accepted).is_ok()).unwrap_or(false)
 }

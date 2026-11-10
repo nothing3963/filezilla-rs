@@ -42,6 +42,7 @@
   "bookmarks.remove": "Könyvjelző eltávolítása",
   "bookmarks.noPath": "Nincs menthető könyvtár",
   "bookmarks.noRemote": "Először csatlakozzon egy távoli állomáshoz",
+  "bookmarks.siteMissing": "A könyvjelzőhöz tartozó webhely már nem létezik",
   "search.title": "Távoli keresés",
   "search.subtitle": "Fájlnevek rekurzív keresése az aktuális könyvtárból",
   "search.placeholder": "A fájlnév tartalmazza…",

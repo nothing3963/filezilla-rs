@@ -1,6 +1,7 @@
 //! Transfer queue: scheduling, progress, pause/resume, retry and persistence.
 
 use crate::error::{AppError, AppResult};
+use crate::local_path::sanitize_remote_name;
 use crate::logs::LogBus;
 use crate::models::{
     EnqueueRequest, TransferAction, TransferDirection, TransferItem, TransferStatus,
@@ -14,11 +15,11 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -26,6 +27,33 @@ struct TaskControl {
     cancel: CancellationToken,
     paused: Arc<AtomicBool>,
     speed_limit_bps: Arc<AtomicU64>,
+    /// Identifies this control record.  A worker started by an earlier
+    /// attempt of the same task must not write state after `retry` replaced
+    /// its control; stale workers compare this value and drop their writes.
+    generation: u64,
+    /// True while a worker task tied to this record is alive.  Cancel only
+    /// marks the record; the worker itself finalises the state, so a Retry
+    /// can never start a second worker while the old one still holds open
+    /// file handles on the same part file.
+    running: Arc<AtomicBool>,
+}
+
+/// Marks the owning transfer worker as running until the guard is dropped.
+struct RunningGuard {
+    flag: Arc<AtomicBool>,
+}
+
+impl RunningGuard {
+    fn new(flag: Arc<AtomicBool>) -> Self {
+        flag.store(true, Ordering::Relaxed);
+        Self { flag }
+    }
+}
+
+impl Drop for RunningGuard {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Relaxed);
+    }
 }
 
 struct QueuedFile {
@@ -52,7 +80,16 @@ enum StoredQueue {
 }
 
 fn decode_queue(bytes: &[u8]) -> Option<Vec<TransferTask>> {
-    match serde_json::from_slice::<StoredQueue>(bytes).ok()? {
+    let saved: StoredQueue = match serde_json::from_slice(bytes) {
+        Ok(saved) => saved,
+        Err(err) => {
+            // A corrupt queue file must be visible in the logs, not dropped
+            // without a trace.
+            tracing::warn!("queue.json could not be parsed ({err}); starting empty");
+            return None;
+        }
+    };
+    match saved {
         StoredQueue::Versioned(payload) => {
             if payload.version > QUEUE_VERSION {
                 tracing::warn!("queue.json version {} is newer; ignoring", payload.version);
@@ -92,9 +129,26 @@ pub struct TransferManager {
     logs: Arc<LogBus>,
     tasks: RwLock<Vec<TransferTask>>,
     controls: Mutex<HashMap<String, TaskControl>>,
-    semaphore: RwLock<Arc<Semaphore>>,
-    site_semaphores: Mutex<HashMap<String, (u8, Arc<Semaphore>)>>,
+    /// One long-lived semaphore for the global concurrency limit.  The limit
+    /// is moved with `add_permits` / reserved permits: replacing the whole
+    /// semaphore would let permits of the old pool run alongside permits of
+    /// the new one, doubling the transient concurrency.
+    semaphore: Arc<Semaphore>,
+    concurrency: AtomicUsize,
+    reserved_permits: Arc<Mutex<Vec<OwnedSemaphorePermit>>>,
+    site_semaphores: Mutex<
+        HashMap<String, (u8, Arc<Semaphore>, Arc<Mutex<Vec<OwnedSemaphorePermit>>>)>,
+    >,
+    next_generation: AtomicU64,
     last_emit: Mutex<HashMap<String, Instant>>,
+    last_save: Mutex<Instant>,
+}
+
+/// Download targets are written to `<target>.fzpart` first and renamed into
+/// place only after a verified complete transfer, so cancel/crash never
+/// destroys the previous file (and resume works on the part file).
+fn part_path(local_path: &str) -> String {
+    format!("{local_path}.fzpart")
 }
 
 fn now_ms() -> i64 {
@@ -175,7 +229,21 @@ async fn collect_download(
         local_dirs.push(local_path.clone());
         let entries = fs.list(&remote_path).await?;
         for entry in entries {
-            let child_local = local_path.join(&entry.name);
+            // A malicious server may send `..\..\x`, `C:\evil` or reserved
+            // device names; refuse anything that is not a plain child name,
+            // then re-check containment after joining (defence in depth).
+            let Some(safe_name) = sanitize_remote_name(&entry.name) else {
+                tracing::warn!(
+                    "skipping unsafe entry name {:?} in remote directory {remote_path}",
+                    entry.name
+                );
+                continue;
+            };
+            let child_local = local_path.join(&safe_name);
+            if !child_local.starts_with(&local_path) {
+                tracing::warn!("skipping {:?}: escapes the download directory", entry.name);
+                continue;
+            }
             if entry.is_dir {
                 if entry.is_symlink {
                     continue;
@@ -247,6 +315,19 @@ async fn expand_items(
                     )
                     .await?;
                 } else {
+                    // The download target name is usually derived from the
+                    // remote entry name; validate it here as well so a single
+                    // malicious file name cannot be enqueued either.
+                    let leaf = Path::new(&item.local_path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("");
+                    if sanitize_remote_name(leaf).is_none() {
+                        return Err(AppError::invalid(format!(
+                            "The name for {} cannot be saved safely in the local directory",
+                            item.remote_path
+                        )));
+                    }
                     if remote.is_none() {
                         remote = Some(remote::connect(resolved).await?);
                     }
@@ -316,9 +397,13 @@ impl TransferManager {
             logs,
             tasks: RwLock::new(Vec::new()),
             controls: Mutex::new(HashMap::new()),
-            semaphore: RwLock::new(Arc::new(Semaphore::new(concurrency))),
+            semaphore: Arc::new(Semaphore::new(concurrency)),
+            concurrency: AtomicUsize::new(concurrency),
+            reserved_permits: Arc::new(Mutex::new(Vec::new())),
             site_semaphores: Mutex::new(HashMap::new()),
+            next_generation: AtomicU64::new(1),
             last_emit: Mutex::new(HashMap::new()),
+            last_save: Mutex::new(Instant::now()),
         });
         manager.restore_queue();
         manager
@@ -332,8 +417,8 @@ impl TransferManager {
         let Some(saved) = decode_queue(&bytes) else {
             return;
         };
-        let mut controls = self.controls.lock().unwrap();
-        let mut tasks = self.tasks.write().unwrap();
+        let mut controls = self.controls.lock().unwrap_or_else(|e| e.into_inner());
+        let mut tasks = self.tasks.write().unwrap_or_else(|e| e.into_inner());
         for mut task in saved {
             if task.status.is_terminal() || task.site_id.is_none() {
                 continue;
@@ -349,6 +434,8 @@ impl TransferManager {
                     cancel: CancellationToken::new(),
                     paused: Arc::new(AtomicBool::new(true)),
                     speed_limit_bps: Arc::new(AtomicU64::new(0)),
+                    generation: self.next_generation.fetch_add(1, Ordering::Relaxed),
+                    running: Arc::new(AtomicBool::new(false)),
                 },
             );
             tasks.push(task);
@@ -360,7 +447,7 @@ impl TransferManager {
         let tasks: Vec<TransferTask> = self
             .tasks
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .filter(|task| !task.status.is_terminal())
             .cloned()
@@ -380,8 +467,8 @@ impl TransferManager {
         };
         let mut start = Vec::new();
         {
-            let mut tasks = self.tasks.write().unwrap();
-            let mut controls = self.controls.lock().unwrap();
+            let mut tasks = self.tasks.write().unwrap_or_else(|e| e.into_inner());
+            let mut controls = self.controls.lock().unwrap_or_else(|e| e.into_inner());
             for task in tasks.iter_mut() {
                 if task.site_id.as_deref() != Some(site_id)
                     || task.status != TransferStatus::Paused
@@ -400,6 +487,8 @@ impl TransferManager {
                         cancel: CancellationToken::new(),
                         paused: Arc::new(AtomicBool::new(false)),
                         speed_limit_bps: Arc::new(AtomicU64::new(0)),
+                        generation: self.next_generation.fetch_add(1, Ordering::Relaxed),
+                        running: Arc::new(AtomicBool::new(false)),
                     },
                 );
                 start.push(task.id.clone());
@@ -420,15 +509,49 @@ impl TransferManager {
 
     pub fn set_concurrency(&self, value: u8) {
         let value = value.clamp(1, 10) as usize;
-        *self.semaphore.write().unwrap() = Arc::new(Semaphore::new(value));
+        let current = self.concurrency.swap(value, Ordering::Relaxed);
+        match value.cmp(&current) {
+            std::cmp::Ordering::Greater => {
+                // First hand back permits we had reserved for a previous
+                // shrink, then create the missing ones.
+                let deficit = value - current;
+                let mut held = self.reserved_permits.lock().unwrap_or_else(|e| e.into_inner());
+                let mut remaining = deficit;
+                while remaining > 0 {
+                    if let Some(permit) = held.pop() {
+                        drop(permit);
+                        remaining -= 1;
+                    } else {
+                        break;
+                    }
+                }
+                drop(held);
+                if remaining > 0 {
+                    self.semaphore.add_permits(remaining);
+                }
+            }
+            std::cmp::Ordering::Less => {
+                // Withdraw permits: running transfers keep theirs, the pool
+                // shrinks as permits are returned and parked in `held`.
+                let deficit = (current - value) as u32;
+                let semaphore = self.semaphore.clone();
+                let held = self.reserved_permits.clone();
+                tokio::spawn(async move {
+                    if let Ok(permit) = semaphore.acquire_many_owned(deficit).await {
+                        held.lock().unwrap_or_else(|e| e.into_inner()).push(permit);
+                    }
+                });
+            }
+            std::cmp::Ordering::Equal => {}
+        }
     }
 
     pub fn list(&self) -> Vec<TransferTask> {
-        self.tasks.read().unwrap().clone()
+        self.tasks.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     pub fn summary(&self) -> TransferSummary {
-        let tasks = self.tasks.read().unwrap();
+        let tasks = self.tasks.read().unwrap_or_else(|e| e.into_inner());
         let mut summary = TransferSummary {
             active: 0,
             queued: 0,
@@ -473,6 +596,21 @@ impl TransferManager {
         let mut created = Vec::new();
 
         for item in files {
+            {
+                let tasks = self.tasks.read().unwrap_or_else(|e| e.into_inner());
+                let duplicate = tasks.iter().any(|t| {
+                    !t.status.is_terminal()
+                        && t.direction == item.direction
+                        && t.local_path == item.local_path
+                        && t.remote_path == item.remote_path
+                });
+                drop(tasks);
+                if duplicate {
+                    self.logs
+                        .info("transfer", format!("Already queued: {}", item.remote_path));
+                    continue;
+                }
+            }
             let name = item
                 .remote_path
                 .trim_end_matches('/')
@@ -502,6 +640,8 @@ impl TransferManager {
                 created_at: now_ms(),
                 started_at: None,
                 finished_at: None,
+                expected_remote_size: None,
+                expected_remote_mtime: None,
             };
             let limit = match item.direction {
                 TransferDirection::Download => settings.download_limit_kbps,
@@ -511,9 +651,17 @@ impl TransferManager {
                 cancel: CancellationToken::new(),
                 paused: Arc::new(AtomicBool::new(false)),
                 speed_limit_bps: Arc::new(AtomicU64::new(u64::from(limit) * 1024)),
+                generation: self.next_generation.fetch_add(1, Ordering::Relaxed),
+                running: Arc::new(AtomicBool::new(false)),
             };
-            self.controls.lock().unwrap().insert(id.clone(), control);
-            self.tasks.write().unwrap().push(task.clone());
+            self.controls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(id.clone(), control);
+            self.tasks
+                .write()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(task.clone());
             self.emit_task(&task);
             created.push(task);
             let manager = self.clone();
@@ -530,15 +678,18 @@ impl TransferManager {
         let Some(task_snapshot) = self.get_task(&task_id) else {
             return;
         };
-        let Some((cancel, paused, limit)) = self.control_parts(&task_id) else {
+        let Some((cancel, paused, limit, generation, running)) = self.control_parts(&task_id) else {
             return;
         };
+        // H3: marks this worker as alive until it returns; the Cancel action
+        // relies on this flag to avoid finalising while file handles are open.
+        let _running = RunningGuard::new(running);
         let ctl = TransferControl::new(cancel.clone(), paused.clone(), limit.clone());
 
         let resolved = match self.sessions.resolved_for(&task_snapshot.session_id).await {
             Ok(config) => config,
             Err(err) => {
-                self.fail(&task_id, &err.code, &err.message);
+                self.fail_run(&task_id, generation, &err.code, &err.message);
                 return;
             }
         };
@@ -546,19 +697,60 @@ impl TransferManager {
         let _site_permit = if let Some(site) = task_snapshot.site_id.clone() {
             let limit = resolved.config.max_connections.clamp(1, 10);
             let semaphore = {
-                let mut map = self.site_semaphores.lock().unwrap();
-                match map.get(&site) {
-                    Some((current, semaphore)) if *current == limit => semaphore.clone(),
-                    _ => {
+                let mut map = self
+                    .site_semaphores
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                match map.get_mut(&site) {
+                    Some((current, semaphore, held)) => {
+                        if *current != limit {
+                            // Adjust the existing pool in place (same reasoning
+                            // as set_concurrency: no replacement, no double
+                            // permit pools).
+                            if limit > *current {
+                                let deficit = (limit - *current) as usize;
+                                let mut held = held.lock().unwrap_or_else(|e| e.into_inner());
+                                let mut remaining = deficit;
+                                while remaining > 0 {
+                                    if let Some(permit) = held.pop() {
+                                        drop(permit);
+                                        remaining -= 1;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                semaphore.add_permits(remaining);
+                            } else {
+                                let deficit = (*current - limit) as u32;
+                                let sem = semaphore.clone();
+                                let held = held.clone();
+                                tokio::spawn(async move {
+                                    if let Ok(permit) = sem.acquire_many_owned(deficit).await {
+                                        held.lock().unwrap_or_else(|e| e.into_inner()).push(permit);
+                                    }
+                                });
+                            }
+                            *current = limit;
+                        }
+                        semaphore.clone()
+                    }
+                    None => {
                         let semaphore = Arc::new(Semaphore::new(limit as usize));
-                        map.insert(site, (limit, semaphore.clone()));
+                        map.insert(
+                            site,
+                            (
+                                limit,
+                                semaphore.clone(),
+                                Arc::new(Mutex::new(Vec::<OwnedSemaphorePermit>::new())),
+                            ),
+                        );
                         semaphore
                     }
                 }
             };
             let permit = tokio::select! {
                 _ = cancel.cancelled() => {
-                    self.finish_cancelled(&task_id);
+                    self.finish_cancelled_run(&task_id, generation);
                     return;
                 }
                 permit = semaphore.acquire_owned() => permit,
@@ -566,7 +758,7 @@ impl TransferManager {
             match permit {
                 Ok(permit) => Some(permit),
                 Err(_) => {
-                    self.fail(&task_id, "QUEUE", "Site transfer queue was closed");
+                    self.fail_run(&task_id, generation, "QUEUE", "Site transfer queue was closed");
                     return;
                 }
             }
@@ -575,53 +767,89 @@ impl TransferManager {
         };
 
         let permit = {
-            let semaphore = self.semaphore.read().unwrap().clone();
+            let semaphore = self.semaphore.clone();
             tokio::select! {
                 _ = cancel.cancelled() => {
-                    self.finish_cancelled(&task_id);
+                    self.finish_cancelled_run(&task_id, generation);
                     return;
                 }
                 permit = semaphore.acquire_owned() => permit,
             }
         };
         let Ok(_permit) = permit else {
-            self.fail(&task_id, "QUEUE", "Transfer queue was closed");
+            self.fail_run(&task_id, generation, "QUEUE", "Transfer queue was closed");
             return;
         };
-        self.update_status(&task_id, TransferStatus::Connecting, None);
+        // Generation-checked status write: cancelled meanwhile or superseded
+        // by a retry → this worker stops here.
+        if !self.update_status_run(&task_id, generation, TransferStatus::Connecting, None) {
+            return;
+        }
         let remote = match remote::connect(&resolved).await {
             Ok(fs) => fs,
             Err(err) => {
-                self.fail(&task_id, &err.code, &err.message);
+                self.fail_run(&task_id, generation, &err.code, &err.message);
                 return;
             }
         };
         let mut remote = remote;
 
-        // Resolve size and resume offset. Resuming is only allowed when this
-        // task itself has an in-progress record (paused mid-transfer or
-        // restored from queue.json); a fresh task always overwrites the
-        // existing remote/local file instead of trusting an unrelated partial.
+        // Resolve size and resume offset.  Resume is only honoured when this
+        // task itself has an in-progress record AND the recorded remote
+        // identity (size / mtime) still matches the live stat.  A file that
+        // was swapped on the server mid-transfer restarts from zero instead of
+        // being spliced with an unrelated partial (silent corruption).
         let mut size = task_snapshot.size;
         let mut resume_from = 0u64;
         let settings = self.store.settings();
         let had_progress = task_snapshot.transferred > 0;
+        let part = part_path(&task_snapshot.local_path);
+        let mut expected_size: Option<u64>;
+        let mut expected_mtime: Option<i64> = None;
         match task_snapshot.direction {
             TransferDirection::Download => {
                 if let Ok(entry) = remote.stat(&task_snapshot.remote_path).await {
                     if entry.is_dir {
-                        self.fail(&task_id, "REMOTE", "Cannot download a directory");
+                        self.fail_run(
+                            &task_id,
+                            generation,
+                            "REMOTE",
+                            "Cannot download a directory",
+                        );
                         let _ = remote.close().await;
                         return;
                     }
                     size = entry.size;
+                    expected_mtime = parse_remote_mtime(&entry.modified);
                 }
+                expected_size = Some(size);
                 if settings.resume_transfers && had_progress {
-                    if let Ok(meta) = tokio::fs::metadata(&task_snapshot.local_path).await {
-                        let existing = meta.len();
-                        if existing > 0 && (size == 0 || existing < size) {
-                            resume_from = existing;
+                    let identity_matches = match task_snapshot.expected_remote_size {
+                        Some(prev_size) => {
+                            size == prev_size
+                                && match (task_snapshot.expected_remote_mtime, expected_mtime) {
+                                    (Some(prev), Some(now)) => prev == now,
+                                    _ => true,
+                                }
                         }
+                        None => true,
+                    };
+                    if identity_matches {
+                        if let Ok(meta) = tokio::fs::metadata(&part).await {
+                            let existing = meta.len();
+                            if existing > 0 && (size == 0 || existing < size) {
+                                resume_from = existing;
+                            }
+                        }
+                    } else {
+                        self.logs.info(
+                            "transfer",
+                            format!(
+                                "Remote file changed since the last attempt; restarting {}",
+                                task_snapshot.remote_path
+                            ),
+                        );
+                        tokio::fs::remove_file(&part).await.ok();
                     }
                 }
             }
@@ -629,31 +857,64 @@ impl TransferManager {
                 if let Ok(meta) = tokio::fs::metadata(&task_snapshot.local_path).await {
                     size = meta.len();
                 }
+                expected_size = None;
+                if let Ok(entry) = remote.stat(&task_snapshot.remote_path).await {
+                    if !entry.is_dir {
+                        expected_size = Some(entry.size);
+                        expected_mtime = parse_remote_mtime(&entry.modified);
+                    }
+                }
                 if settings.resume_transfers && had_progress && size > 0 {
-                    if let Ok(entry) = remote.stat(&task_snapshot.remote_path).await {
-                        if !entry.is_dir && entry.size > 0 && entry.size < size {
-                            resume_from = entry.size;
+                    if let Some(remote_size) = expected_size {
+                        let identity_matches =
+                            match (task_snapshot.expected_remote_size, expected_size) {
+                                (Some(prev_size), Some(now_size)) => {
+                                    prev_size == now_size
+                                        && match (
+                                            task_snapshot.expected_remote_mtime,
+                                            expected_mtime,
+                                        ) {
+                                            (Some(prev), Some(now)) => prev == now,
+                                            _ => true,
+                                        }
+                                }
+                                _ => true,
+                            };
+                        if identity_matches && remote_size > 0 && remote_size < size {
+                            resume_from = remote_size;
+                        } else if !identity_matches {
+                            self.logs.info(
+                                "transfer",
+                                format!(
+                                    "Remote file changed since the last attempt; restarting {}",
+                                    task_snapshot.remote_path
+                                ),
+                            );
                         }
                     }
                 }
             }
         }
 
-        {
-            let mut tasks = self.tasks.write().unwrap();
-            if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
-                task.size = size;
-                task.resumed_from = resume_from;
-                task.transferred = resume_from;
-                task.status = TransferStatus::Active;
-                task.started_at = Some(now_ms());
-            }
+        // H4: do not clobber a Pause/Cancel that arrived during Connecting.
+        if !self.activate_run(
+            &task_id,
+            generation,
+            size,
+            resume_from,
+            expected_size,
+            expected_mtime,
+        ) {
+            let _ = remote.close().await;
+            return;
         }
-        self.emit(&task_id);
 
         if size > 0 && resume_from >= size {
-            // Already complete.
-            self.complete(&task_id, size);
+            // Already complete: the part file (if any) is the finished file.
+            if task_snapshot.direction == TransferDirection::Download {
+                Self::finalize_part(&task_snapshot.local_path, &part).await;
+            }
+            self.complete_run(&task_id, generation, size);
             let _ = remote.close().await;
             return;
         }
@@ -679,7 +940,9 @@ impl TransferManager {
 
         let result = match task_snapshot.direction {
             TransferDirection::Download => {
-                let local = PathBuf::from(&task_snapshot.local_path);
+                // Downloads land in `<target>.fzpart`; the previous file is
+                // only replaced after a verified complete transfer.
+                let local = PathBuf::from(&part);
                 remote
                     .download(
                         &task_snapshot.remote_path,
@@ -708,9 +971,9 @@ impl TransferManager {
             if let Some(timestamp) = task_snapshot.mtime {
                 match task_snapshot.direction {
                     TransferDirection::Download => {
-                        if let Err(err) =
-                            set_local_mtime(Path::new(&task_snapshot.local_path), timestamp)
-                        {
+                        // Stamp the part file before the rename so the final
+                        // file carries the remote timestamp.
+                        if let Err(err) = set_local_mtime(Path::new(&part), timestamp) {
                             tracing::warn!(
                                 "cannot preserve local mtime for {}: {err}",
                                 task_snapshot.local_path
@@ -736,13 +999,30 @@ impl TransferManager {
 
         match result {
             Ok(total) => {
-                self.complete(&task_id, total.max(size));
+                if task_snapshot.direction == TransferDirection::Download {
+                    Self::finalize_part(&task_snapshot.local_path, &part).await;
+                }
+                self.complete_run(&task_id, generation, total.max(size));
             }
             Err(err) if err.code == "CANCELLED" => {
-                self.finish_cancelled(&task_id);
+                self.finish_cancelled_run(&task_id, generation);
             }
             Err(err) => {
-                self.fail(&task_id, &err.code, &err.message);
+                self.fail_run(&task_id, generation, &err.code, &err.message);
+            }
+        }
+    }
+
+    /// Move the finished part file onto its final name.  Windows `rename`
+    /// refuses to overwrite, so the destination is removed first (matching
+    /// the plain-overwrite semantics users expect from FileZilla).
+    async fn finalize_part(local_path: &str, part: &str) {
+        match tokio::fs::rename(part, local_path).await {
+            Ok(()) => {}
+            Err(_) => {
+                if tokio::fs::remove_file(local_path).await.is_ok() {
+                    let _ = tokio::fs::rename(part, local_path).await;
+                }
             }
         }
     }
@@ -750,29 +1030,62 @@ impl TransferManager {
     fn control_parts(
         &self,
         task_id: &str,
-    ) -> Option<(CancellationToken, Arc<AtomicBool>, Arc<AtomicU64>)> {
-        let map = self.controls.lock().unwrap();
+    ) -> Option<(
+        CancellationToken,
+        Arc<AtomicBool>,
+        Arc<AtomicU64>,
+        u64,
+        Arc<AtomicBool>,
+    )> {
+        let map = self.controls.lock().unwrap_or_else(|e| e.into_inner());
         map.get(task_id).map(|c| {
             (
                 c.cancel.clone(),
                 c.paused.clone(),
                 c.speed_limit_bps.clone(),
+                c.generation,
+                c.running.clone(),
             )
         })
+    }
+
+    /// True while the control record this worker started with is still the
+    /// current one.  After a retry replaced it, the stale worker must not
+    /// touch task state or the control map any more.
+    fn control_is_current(&self, task_id: &str, generation: u64) -> bool {
+        let controls = self.controls.lock().unwrap_or_else(|e| e.into_inner());
+        controls
+            .get(task_id)
+            .is_some_and(|c| c.generation == generation)
     }
 
     fn get_task(&self, task_id: &str) -> Option<TransferTask> {
         self.tasks
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .find(|t| t.id == task_id)
             .cloned()
     }
 
+    /// Chunk-level progress: both the state write and the event are throttled
+    /// to ~5 Hz so a busy transfer cannot monopolise the tasks write lock
+    /// (linear scans under lock starve the UI reads).
     fn progress(&self, task_id: &str, transferred: u64) {
+        let now = Instant::now();
         {
-            let mut tasks = self.tasks.write().unwrap();
+            let mut last = self.last_emit.lock().unwrap_or_else(|e| e.into_inner());
+            let due = last
+                .get(task_id)
+                .map(|t| now.duration_since(*t) >= Duration::from_millis(180))
+                .unwrap_or(true);
+            if !due {
+                return;
+            }
+            last.insert(task_id.to_string(), now);
+        }
+        {
+            let mut tasks = self.tasks.write().unwrap_or_else(|e| e.into_inner());
             let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) else {
                 return;
             };
@@ -784,22 +1097,26 @@ impl TransferManager {
             task.speed_bps =
                 (((transferred.saturating_sub(task.resumed_from)) as f64) / elapsed) as u64;
         }
-        let mut last = self.last_emit.lock().unwrap();
-        let now = Instant::now();
-        let due = last
-            .get(task_id)
-            .map(|t| now.duration_since(*t) >= Duration::from_millis(180))
-            .unwrap_or(true);
-        if due {
-            last.insert(task_id.to_string(), now);
-            drop(last);
-            self.emit(task_id);
+        self.emit(task_id);
+        // Persist in-flight progress (throttled) so a crash restores the
+        // resume record instead of silently restarting from zero.
+        let save_due = {
+            let mut last_save = self.last_save.lock().unwrap_or_else(|e| e.into_inner());
+            if now.duration_since(*last_save) >= Duration::from_millis(2000) {
+                *last_save = now;
+                true
+            } else {
+                false
+            }
+        };
+        if save_due {
+            self.save_queue();
         }
     }
 
     fn update_status(&self, task_id: &str, status: TransferStatus, error: Option<AppError>) {
         {
-            let mut tasks = self.tasks.write().unwrap();
+            let mut tasks = self.tasks.write().unwrap_or_else(|e| e.into_inner());
             if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
                 task.status = status;
                 if let Some(err) = error {
@@ -812,9 +1129,101 @@ impl TransferManager {
         self.save_queue();
     }
 
+    /// Generation-guarded status transition used by workers.  Only accepts the
+    /// Queued → Connecting transition so a Pause/Cancel that landed while the
+    /// worker was waiting on a permit or connecting is never clobbered (H4).
+    fn update_status_run(
+        &self,
+        task_id: &str,
+        generation: u64,
+        status: TransferStatus,
+        error: Option<AppError>,
+    ) -> bool {
+        if !self.control_is_current(task_id, generation) {
+            return false;
+        }
+        {
+            let mut tasks = self.tasks.write().unwrap_or_else(|e| e.into_inner());
+            let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) else {
+                return false;
+            };
+            if task.status != TransferStatus::Queued {
+                return false;
+            }
+            task.status = status;
+            if let Some(err) = error {
+                task.error = Some(err.message);
+                task.error_code = Some(err.code);
+            }
+        }
+        self.emit(task_id);
+        self.save_queue();
+        true
+    }
+
+    /// Records size/resume/identity and flips Connecting → Active.  Returns
+    /// false when the task was cancelled or removed meanwhile, or when it is
+    /// paused (H4: the paused status is preserved, the pump parks on the flag
+    /// instead).
+    fn activate_run(
+        &self,
+        task_id: &str,
+        generation: u64,
+        size: u64,
+        resume_from: u64,
+        expected_size: Option<u64>,
+        expected_mtime: Option<i64>,
+    ) -> bool {
+        if !self.control_is_current(task_id, generation) {
+            return false;
+        }
+        {
+            let mut tasks = self.tasks.write().unwrap_or_else(|e| e.into_inner());
+            let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) else {
+                return false;
+            };
+            if task.status.is_terminal() {
+                return false;
+            }
+            task.size = size;
+            task.resumed_from = resume_from;
+            task.transferred = resume_from;
+            task.expected_remote_size = expected_size;
+            task.expected_remote_mtime = expected_mtime;
+            if task.status == TransferStatus::Connecting {
+                task.status = TransferStatus::Active;
+                task.started_at = Some(now_ms());
+            }
+        }
+        self.emit(task_id);
+        self.save_queue();
+        true
+    }
+
+    fn complete_run(&self, task_id: &str, generation: u64, total: u64) {
+        if !self.control_is_current(task_id, generation) {
+            return;
+        }
+        self.complete(task_id, total);
+    }
+
+    fn fail_run(&self, task_id: &str, generation: u64, code: &str, message: &str) {
+        if !self.control_is_current(task_id, generation) {
+            return;
+        }
+        self.fail(task_id, code, message);
+    }
+
+    fn finish_cancelled_run(&self, task_id: &str, generation: u64) {
+        if !self.control_is_current(task_id, generation) {
+            return;
+        }
+        self.finish_cancelled(task_id);
+    }
+
     fn complete(&self, task_id: &str, total: u64) {
         {
-            let mut tasks = self.tasks.write().unwrap();
+            let mut tasks = self.tasks.write().unwrap_or_else(|e| e.into_inner());
             if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
                 task.status = TransferStatus::Completed;
                 task.transferred = total.max(task.transferred);
@@ -825,7 +1234,14 @@ impl TransferManager {
                 task.error_code = None;
             }
         }
-        self.controls.lock().unwrap().remove(task_id);
+        self.controls
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(task_id);
+        self.last_emit
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(task_id);
         self.emit(task_id);
         self.save_queue();
         if let Some(task) = self.get_task(task_id) {
@@ -836,7 +1252,7 @@ impl TransferManager {
 
     fn fail(&self, task_id: &str, code: &str, message: &str) {
         {
-            let mut tasks = self.tasks.write().unwrap();
+            let mut tasks = self.tasks.write().unwrap_or_else(|e| e.into_inner());
             if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
                 task.status = TransferStatus::Failed;
                 task.error = Some(message.to_string());
@@ -845,7 +1261,14 @@ impl TransferManager {
                 task.finished_at = Some(now_ms());
             }
         }
-        self.controls.lock().unwrap().remove(task_id);
+        self.controls
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(task_id);
+        self.last_emit
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(task_id);
         self.emit(task_id);
         self.save_queue();
         self.logs
@@ -854,7 +1277,7 @@ impl TransferManager {
 
     fn finish_cancelled(&self, task_id: &str) {
         {
-            let mut tasks = self.tasks.write().unwrap();
+            let mut tasks = self.tasks.write().unwrap_or_else(|e| e.into_inner());
             if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
                 if matches!(
                     task.status,
@@ -867,7 +1290,14 @@ impl TransferManager {
                 task.finished_at = Some(now_ms());
             }
         }
-        self.controls.lock().unwrap().remove(task_id);
+        self.controls
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(task_id);
+        self.last_emit
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(task_id);
         self.emit(task_id);
         self.save_queue();
     }
@@ -884,7 +1314,12 @@ impl TransferManager {
                 ) {
                     return Err(AppError::invalid("This transfer cannot be paused"));
                 }
-                if let Some(control) = self.controls.lock().unwrap().get(task_id) {
+                if let Some(control) = self
+                    .controls
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(task_id)
+                {
                     control.paused.store(true, Ordering::Relaxed);
                 }
                 self.update_status(task_id, TransferStatus::Paused, None);
@@ -893,7 +1328,12 @@ impl TransferManager {
                 if task.status != TransferStatus::Paused {
                     return Err(AppError::invalid("This transfer is not paused"));
                 }
-                if let Some(control) = self.controls.lock().unwrap().get(task_id) {
+                if let Some(control) = self
+                    .controls
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(task_id)
+                {
                     control.paused.store(false, Ordering::Relaxed);
                 }
                 self.update_status(task_id, TransferStatus::Active, None);
@@ -902,14 +1342,25 @@ impl TransferManager {
                 if task.status.is_terminal() {
                     return Ok(());
                 }
-                if let Some(control) = self.controls.lock().unwrap().get(task_id) {
-                    control.paused.store(false, Ordering::Relaxed);
-                    control.cancel.cancel();
-                }
-                if task.status == TransferStatus::Queued {
-                    self.finish_cancelled(task_id);
-                } else {
-                    self.update_status(task_id, TransferStatus::Cancelled, None);
+                let control = self
+                    .controls
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(task_id)
+                    .map(|c| (c.cancel.clone(), c.paused.clone(), c.running.clone()));
+                match control {
+                    Some((cancel, paused, running)) => {
+                        paused.store(false, Ordering::Relaxed);
+                        cancel.cancel();
+                        // H3: a live worker finalises Cancelled itself once
+                        // its file handles are closed; writing the terminal
+                        // state here would let Retry spawn a second writer
+                        // against the same part file.
+                        if !running.load(Ordering::Relaxed) {
+                            self.finish_cancelled(task_id);
+                        }
+                    }
+                    None => self.finish_cancelled(task_id),
                 }
             }
             TransferAction::Retry => {
@@ -922,8 +1373,18 @@ impl TransferManager {
                 if !task.status.is_terminal() {
                     return Err(AppError::invalid("Pause or cancel the transfer first"));
                 }
-                self.tasks.write().unwrap().retain(|t| t.id != task_id);
-                self.controls.lock().unwrap().remove(task_id);
+                self.tasks
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .retain(|t| t.id != task_id);
+                self.controls
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(task_id);
+                self.last_emit
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(task_id);
                 let _ = self.app.emit("transfer:removed", task_id.to_string());
                 self.save_queue();
             }
@@ -937,7 +1398,7 @@ impl TransferManager {
             .ok_or_else(|| AppError::not_found("Transfer not found"))?;
         let settings = self.store.settings();
         {
-            let mut tasks = self.tasks.write().unwrap();
+            let mut tasks = self.tasks.write().unwrap_or_else(|e| e.into_inner());
             if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
                 task.status = TransferStatus::Queued;
                 task.transferred = 0;
@@ -949,18 +1410,28 @@ impl TransferManager {
                 task.finished_at = None;
             }
         }
+        // Retry means "start over": drop any partial download so a
+        // same-size/same-mtime swap cannot be spliced into a fresh attempt.
+        if task.direction == TransferDirection::Download {
+            let _ = std::fs::remove_file(part_path(&task.local_path));
+        }
         let limit = match task.direction {
             TransferDirection::Download => settings.download_limit_kbps,
             TransferDirection::Upload => settings.upload_limit_kbps,
         };
-        self.controls.lock().unwrap().insert(
-            task_id.to_string(),
-            TaskControl {
-                cancel: CancellationToken::new(),
-                paused: Arc::new(AtomicBool::new(false)),
-                speed_limit_bps: Arc::new(AtomicU64::new(u64::from(limit) * 1024)),
-            },
-        );
+        self.controls
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                task_id.to_string(),
+                TaskControl {
+                    cancel: CancellationToken::new(),
+                    paused: Arc::new(AtomicBool::new(false)),
+                    speed_limit_bps: Arc::new(AtomicU64::new(u64::from(limit) * 1024)),
+                    generation: self.next_generation.fetch_add(1, Ordering::Relaxed),
+                    running: Arc::new(AtomicBool::new(false)),
+                },
+            );
         self.emit(task_id);
         self.save_queue();
         let manager = self.clone();
@@ -973,7 +1444,7 @@ impl TransferManager {
 
     pub fn clear_finished(&self) {
         let removed: Vec<String> = {
-            let mut tasks = self.tasks.write().unwrap();
+            let mut tasks = self.tasks.write().unwrap_or_else(|e| e.into_inner());
             let removed: Vec<String> = tasks
                 .iter()
                 .filter(|t| t.status.is_terminal())
@@ -982,11 +1453,14 @@ impl TransferManager {
             tasks.retain(|t| !t.status.is_terminal());
             removed
         };
-        let mut controls = self.controls.lock().unwrap();
+        let mut controls = self.controls.lock().unwrap_or_else(|e| e.into_inner());
+        let mut last_emit = self.last_emit.lock().unwrap_or_else(|e| e.into_inner());
         for id in &removed {
             controls.remove(id);
+            last_emit.remove(id);
         }
         drop(controls);
+        drop(last_emit);
         let _ = self.app.emit("transfers:cleared", removed);
         self.save_queue();
     }
@@ -1062,6 +1536,8 @@ mod tests {
             created_at: 1,
             started_at: None,
             finished_at: None,
+            expected_remote_size: Some(12),
+            expected_remote_mtime: Some(1600000000),
         };
         let json = serde_json::to_string(&task).unwrap();
         let restored: TransferTask = serde_json::from_str(&json).unwrap();

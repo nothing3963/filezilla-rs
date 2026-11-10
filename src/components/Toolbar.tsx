@@ -38,7 +38,7 @@ export function Toolbar() {
   const openSettings = useAppStore((state) => state.openSettings);
   const reconnectTab = useAppStore((state) => state.reconnectTab);
   const closeTab = useAppStore((state) => state.closeTab);
-  const refreshRemote = useAppStore((state) => state.refreshRemote);
+  const refreshAll = useAppStore((state) => state.refreshAll);
   const promptNewFolder = useAppStore((state) => state.promptNewFolder);
   const transferSelection = useAppStore((state) => state.transferSelection);
 
@@ -86,7 +86,7 @@ export function Toolbar() {
         <button
           className="tool-button"
           disabled={!hasRemote}
-          onClick={() => void refreshRemote()}
+          onClick={() => void refreshAll()}
           title={t("toolbar.refresh")}
         >
           <RefreshCw />

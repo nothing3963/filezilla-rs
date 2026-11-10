@@ -332,7 +332,8 @@ export function SiteManager() {
     });
     if (!path) return;
     try {
-      const result = await api.sitesExport(path, false);
+      // The native save dialog already confirmed any overwrite interactively.
+      const result = await api.sitesExport(path, false, true);
       toast("success", t("siteManager.exportDone", { count: result.sites }));
     } catch (error) {
       toast("error", String((error as { message?: string }).message ?? error));

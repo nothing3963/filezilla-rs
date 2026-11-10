@@ -12,7 +12,15 @@ use crate::store::Store;
 use base64::Engine;
 use quick_xml::escape::escape;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+/// Hard safety limits for importing third-party XML: a single hostile file
+/// must not exhaust memory (huge input, deep nesting → stack overflow in
+/// serde recursion) or the keyring (endless sites).
+const MAX_IMPORT_BYTES: usize = 32 * 1024 * 1024;
+const MAX_XML_DEPTH: usize = 64;
+const MAX_IMPORT_SITES: usize = 50_000;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +28,9 @@ pub struct ImportOutcome {
     pub imported: usize,
     pub skipped: usize,
     pub groups_created: usize,
+    /// Entries whose base64 password could not be decoded and therefore were
+    /// imported without credentials (surfaced so users notice, not silently).
+    pub passwords_failed: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -102,9 +113,59 @@ struct PendingSite {
     group_path: Vec<String>,
     config: SiteConfig,
     password: Option<String>,
+    /// Set when a `<Pass>` element was present but could not be decoded.
+    password_lost: bool,
+}
+
+/// Reject oversized or pathologically nested XML *before* handing it to the
+/// recursive serde deserializer (deep nesting overflows the stack there).
+fn precheck_xml(xml: &str) -> AppResult<()> {
+    if xml.len() > MAX_IMPORT_BYTES {
+        return Err(AppError::invalid("Site list file is too large"));
+    }
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut depth = 0usize;
+    let mut servers = 0usize;
+    loop {
+        match reader
+            .read_event()
+            .map_err(|e| AppError::invalid(format!("Malformed XML: {e}")))?
+        {
+            Event::Start(element) => {
+                depth += 1;
+                if depth > MAX_XML_DEPTH {
+                    return Err(AppError::invalid("Site list nesting is too deep"));
+                }
+                if element.local_name().as_ref() == b"Server" {
+                    servers += 1;
+                    if servers > MAX_IMPORT_SITES {
+                        return Err(AppError::invalid("Site list contains too many entries"));
+                    }
+                }
+            }
+            Event::End(_) => depth = depth.saturating_sub(1),
+            Event::Empty(element) => {
+                if element.local_name().as_ref() == b"Server" {
+                    servers += 1;
+                    if servers > MAX_IMPORT_SITES {
+                        return Err(AppError::invalid("Site list contains too many entries"));
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 pub fn import_file(store: &Store, path: &Path) -> AppResult<ImportOutcome> {
+    let meta = std::fs::metadata(path)
+        .map_err(|e| AppError::new("IO", format!("Cannot read {}: {e}", path.display())))?;
+    if meta.len() as usize > MAX_IMPORT_BYTES {
+        return Err(AppError::invalid("Site list file is too large"));
+    }
     let xml = std::fs::read_to_string(path)
         .map_err(|e| AppError::new("IO", format!("Cannot read {}: {e}", path.display())))?;
     import_xml(store, &xml)
@@ -181,11 +242,13 @@ fn filezilla_config_dirs() -> Vec<PathBuf> {
 }
 
 pub fn import_xml(store: &Store, xml: &str) -> AppResult<ImportOutcome> {
+    precheck_xml(xml)?;
     let root: Root = quick_xml::de::from_str(xml)
         .map_err(|e| AppError::new("INVALID_INPUT", format!("Invalid Site Manager XML: {e}")))?;
     let mut pending = Vec::new();
-    collect(&root.servers, &[], &mut pending);
-    collect(&root.recent_servers, &[], &mut pending);
+    let mut dropped = 0usize;
+    collect_servers(&root.servers, &[], &mut pending, 0, &mut dropped);
+    collect_servers(&root.recent_servers, &[], &mut pending, 0, &mut dropped);
     if pending.is_empty() {
         return Err(AppError::invalid("The XML file contains no sites"));
     }
@@ -198,15 +261,28 @@ pub fn import_xml(store: &Store, xml: &str) -> AppResult<ImportOutcome> {
         .collect();
     let mut groups_created = 0;
     let mut imported = 0;
-    let mut skipped = 0;
+    let mut skipped = dropped;
+    let mut passwords_failed = 0;
+    // Group path → id cache so a large import does not re-snapshot the whole
+    // store once per site per group level (was O(N·M)).
+    let mut group_cache: HashMap<(Option<String>, String), String> = HashMap::new();
 
     for mut site in pending {
-        site.config.validate().ok();
+        if let Err(err) = site.config.validate() {
+            tracing::warn!("import site {} invalid: {}", site.name, err.message);
+        }
         if site.config.host.trim().is_empty() {
             skipped += 1;
             continue;
         }
-        let group_id = ensure_group(store, &site.group_path, &mut groups_created)?;
+        if site.password_lost {
+            passwords_failed += 1;
+            tracing::warn!(
+                "password for imported site {} could not be decoded; imported without it",
+                site.name
+            );
+        }
+        let group_id = ensure_group(store, &site.group_path, &mut groups_created, &mut group_cache)?;
         let name = unique_name(&site.name, &existing_names);
         let input = SiteInput {
             id: None,
@@ -234,25 +310,53 @@ pub fn import_xml(store: &Store, xml: &str) -> AppResult<ImportOutcome> {
         imported,
         skipped,
         groups_created,
+        passwords_failed,
     })
 }
 
-fn collect(servers: &Servers, path: &[String], out: &mut Vec<PendingSite>) {
-    for server in &servers.servers {
-        if let Some(site) = convert(server, path) {
-            out.push(site);
+fn collect_servers(
+    node: &Servers,
+    path: &[String],
+    out: &mut Vec<PendingSite>,
+    depth: usize,
+    dropped: &mut usize,
+) {
+    for server in &node.servers {
+        match convert(server, path) {
+            Some(site) => out.push(site),
+            None => *dropped += 1,
         }
     }
-    for folder in &servers.folders {
-        let mut next = path.to_vec();
-        if !folder.name.trim().is_empty() {
-            next.push(folder.name.trim().to_string());
+    for folder in &node.folders {
+        collect_folder(folder, path, out, depth, dropped);
+    }
+}
+
+/// Borrow-based walk (no subtree clones) with a depth cap; the depth limit is
+/// also enforced before parsing, this is the defensive second layer.
+fn collect_folder(
+    folder: &Folder,
+    path: &[String],
+    out: &mut Vec<PendingSite>,
+    depth: usize,
+    dropped: &mut usize,
+) {
+    if depth >= MAX_XML_DEPTH {
+        *dropped += 1;
+        return;
+    }
+    let mut next = path.to_vec();
+    if !folder.name.trim().is_empty() {
+        next.push(folder.name.trim().to_string());
+    }
+    for server in &folder.servers {
+        match convert(server, &next) {
+            Some(site) => out.push(site),
+            None => *dropped += 1,
         }
-        let child = Servers {
-            folders: folder.folders.clone(),
-            servers: folder.servers.clone(),
-        };
-        collect(&child, &next, out);
+    }
+    for child in &folder.folders {
+        collect_folder(child, &next, out, depth + 1, dropped);
     }
 }
 
@@ -261,11 +365,21 @@ fn convert(server: &ServerXml, group_path: &[String]) -> Option<PendingSite> {
     if host.is_empty() {
         return None;
     }
+    // FileZilla's fxp_protocol_t: 0=FTP, 1=SFTP, 2=explicit TLS, 3=implicit.
+    // 4/6 are legacy values this program's older releases wrote for FTPS/FTP;
+    // unknown values are *skipped* rather than silently downgraded to
+    // plaintext FTP (credential exposure).
     let protocol = match server.protocol.unwrap_or(0) {
         1 => Protocol::Sftp,
+        2 | 4 => Protocol::Ftps,
         3 => Protocol::FtpsImplicit,
-        4 => Protocol::Ftps,
-        _ => Protocol::Ftp,
+        0 | 6 => Protocol::Ftp,
+        other => {
+            tracing::warn!(
+                "host {host}: unknown protocol {other}, entry skipped (not downgraded to FTP)"
+            );
+            return None;
+        }
     };
     let user = server.user.clone().unwrap_or_default();
     let key_file = server
@@ -282,6 +396,8 @@ fn convert(server: &ServerXml, group_path: &[String]) -> Option<PendingSite> {
         .as_deref()
         .filter(|value| !value.is_empty())
         .and_then(decode_password);
+    let password_lost =
+        server.pass.as_deref().is_some_and(|v| !v.trim().is_empty()) && password.is_none();
     let name = server
         .name
         .clone()
@@ -338,6 +454,7 @@ fn convert(server: &ServerXml, group_path: &[String]) -> Option<PendingSite> {
         group_path: group_path.to_vec(),
         config,
         password,
+        password_lost,
     })
 }
 
@@ -373,9 +490,19 @@ fn unique_name(name: &str, existing: &[String]) -> String {
     format!("{name} (imported)")
 }
 
-fn ensure_group(store: &Store, path: &[String], created: &mut usize) -> AppResult<Option<String>> {
+fn ensure_group(
+    store: &Store,
+    path: &[String],
+    created: &mut usize,
+    cache: &mut HashMap<(Option<String>, String), String>,
+) -> AppResult<Option<String>> {
     let mut parent: Option<String> = None;
     for name in path {
+        let key = (parent.clone(), name.to_lowercase());
+        if let Some(id) = cache.get(&key).cloned() {
+            parent = Some(id);
+            continue;
+        }
         let snapshot = store.snapshot();
         let existing = snapshot
             .groups
@@ -389,6 +516,9 @@ fn ensure_group(store: &Store, path: &[String], created: &mut usize) -> AppResul
                 Some(group.id)
             }
         };
+        if let Some(id) = &parent {
+            cache.insert(key, id.clone());
+        }
     }
     Ok(parent)
 }
@@ -485,11 +615,13 @@ fn write_site(
 ) {
     let pad = "  ".repeat(indent);
     let cfg = &site.config;
+    // Canonical fxp_protocol_t values so real FileZilla can read our export;
+    // the importer still accepts 4/6 from this program's older releases.
     let protocol = match cfg.protocol {
-        Protocol::Ftp => 6,
+        Protocol::Ftp => 0,
         Protocol::Sftp => 1,
+        Protocol::Ftps => 2,
         Protocol::FtpsImplicit => 3,
-        Protocol::Ftps => 4,
     };
     let logon = if cfg.auth_method == AuthMethod::Key {
         5
@@ -625,7 +757,67 @@ mod tests {
         let xml = std::fs::read_to_string(&path).unwrap();
         assert!(xml.contains("<Folder name=\"Work\">"));
         assert!(xml.contains("<Host>test.rebex.net</Host>"));
-        assert!(xml.contains("<Protocol>4</Protocol>"));
+        assert!(xml.contains("<Protocol>2</Protocol>"));
+    }
+
+    /// The old export dialect used non-canonical 4/6 for FTPS/FTP; the
+    /// importer must still read those files.
+    #[test]
+    fn legacy_export_protocols_still_import() {
+        let xml = r#"<FileZilla3><Servers>
+          <Server><Host>a.example</Host><Protocol>4</Protocol><User>u</User></Server>
+          <Server><Host>b.example</Host><Protocol>6</Protocol><User>u</User></Server>
+        </Servers></FileZilla3>"#;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-legacy-proto");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::load(dir);
+        let outcome = import_xml(&store, xml).unwrap();
+        assert_eq!(outcome.imported, 2);
+        let snapshot = store.snapshot();
+        let a = snapshot.sites.iter().find(|s| s.config.host == "a.example").unwrap();
+        let b = snapshot.sites.iter().find(|s| s.config.host == "b.example").unwrap();
+        assert_eq!(a.config.protocol, Protocol::Ftps);
+        assert_eq!(b.config.protocol, Protocol::Ftp);
+    }
+
+    /// An unknown protocol code must never be silently downgraded to plain
+    /// FTP; the entry is skipped instead.
+    #[test]
+    fn unknown_protocol_is_skipped() {
+        let xml = r#"<FileZilla3><Servers>
+          <Server><Host>ok.example</Host><Protocol>3</Protocol><User>u</User></Server>
+          <Server><Host>bad.example</Host><Protocol>200</Protocol><User>u</User></Server>
+        </Servers></FileZilla3>"#;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-unknown-proto");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::load(dir);
+        let outcome = import_xml(&store, xml).unwrap();
+        assert_eq!(outcome.imported, 1);
+        assert_eq!(outcome.skipped, 1);
+        assert_eq!(store.snapshot().sites[0].config.protocol, Protocol::FtpsImplicit);
+    }
+
+    #[test]
+    fn deeply_nested_folders_are_rejected() {
+        let deep = "<Folder name=\"x\">".repeat(80);
+        let xml = format!(
+            "<FileZilla3><Servers>{deep}<Server><Host>h</Host></Server>{}</Servers></FileZilla3>",
+            "</Folder>".repeat(80)
+        );
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-deep-xml");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::load(dir);
+        let err = import_xml(&store, &xml).unwrap_err();
+        assert_eq!(err.code, "INVALID_INPUT");
     }
     #[test]
     fn detects_managed_filezilla_config() {

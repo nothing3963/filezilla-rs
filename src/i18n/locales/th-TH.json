@@ -42,6 +42,7 @@
   "bookmarks.remove": "เอาบุ๊กมาร์กออก",
   "bookmarks.noPath": "ไม่มีไดเรกทอรีให้บันทึก",
   "bookmarks.noRemote": "เชื่อมต่อไซต์รีโมตก่อน",
+  "bookmarks.siteMissing": "ไซต์ของบุ๊กมาร์กนี้ถูกลบไปแล้ว",
   "search.title": "ค้นหาฝั่งรีโมต",
   "search.subtitle": "ค้นหาชื่อไฟล์แบบเรียกซ้ำจากไดเรกทอรีปัจจุบัน",
   "search.placeholder": "ชื่อไฟล์มีคำว่า…",

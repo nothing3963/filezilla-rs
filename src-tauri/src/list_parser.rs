@@ -708,7 +708,12 @@ fn parse_time(token: &str, entry: &mut Entry) -> bool {
             return false;
         }
     }
-    let date = entry.time.unwrap().date();
+    let Some(date) = entry.time.map(|moment| moment.date()) else {
+        // Callers parse the date before the time; stay defensive so a
+        // malformed listing can never panic (release builds abort the
+        // whole process).
+        return false;
+    };
     let (hour, extra_day) = if hour == 24 {
         (0u32, 1i64)
     } else {
@@ -2588,11 +2593,22 @@ pub fn parse_mlsd_line(line: &str, dir: &str) -> Option<RemoteEntry> {
 }
 
 /// Parse a batch of MLSD lines into entries.
+/// Hard cap on parsed entries per listing: a malicious or broken server
+/// flooding LIST/MLSD must not exhaust memory in a single response.
+const MAX_LISTING_ENTRIES: usize = 100_000;
+
 pub fn parse_mlsd(lines: &[String], dir: &str) -> Vec<RemoteEntry> {
     let dir = normalize(dir);
+    if lines.len() > MAX_LISTING_ENTRIES {
+        tracing::warn!(
+            "MLSD listing truncated to {MAX_LISTING_ENTRIES} entries (server sent {})",
+            lines.len()
+        );
+    }
     lines
         .iter()
         .filter_map(|line| parse_mlsd_line(line, &dir))
+        .take(MAX_LISTING_ENTRIES)
         .collect()
 }
 
@@ -2619,6 +2635,10 @@ pub fn parse_list_for_server(lines: &[String], dir: &str, server_type: &str) -> 
 
     for raw in lines {
         for line in split_raw_lines(raw) {
+            if entries.len() >= MAX_LISTING_ENTRIES {
+                tracing::warn!("LISTING truncated to {MAX_LISTING_ENTRIES} entries");
+                return entries;
+            }
             // `ls -l` always starts with a "total" line which carries no entry.
             if line.starts_with("total ") {
                 continue;

@@ -477,6 +477,16 @@ pub struct TransferTask {
     pub started_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<i64>,
+    /// Remote file size observed when this task first started transferring.
+    /// Resume is only honoured while the live remote stat still matches, so a
+    /// file swapped on the server mid-transfer cannot be spliced with an
+    /// unrelated partial (silent corruption).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_remote_size: Option<u64>,
+    /// Remote mtime recorded alongside `expected_remote_size` (when the
+    /// server reports one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_remote_mtime: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -521,12 +531,26 @@ pub struct TransferSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BookmarkSort {
+    /// "name" | "size" | "modified" | "permissions"
+    pub key: String,
+    /// 1 = ascending, -1 = descending
+    pub dir: i8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Bookmark {
     pub id: String,
     pub name: String,
     /// "local" or "remote"
     pub side: String,
     pub path: String,
+    /// Site a remote bookmark belongs to; empty for local bookmarks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub site_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<BookmarkSort>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

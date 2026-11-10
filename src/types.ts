@@ -53,6 +53,8 @@ export interface ImportOutcome {
   imported: number;
   skipped: number;
   groupsCreated: number;
+  /** Entries whose password could not be decoded (imported without it). */
+  passwordsFailed?: number;
 }
 
 export interface AutoImportOutcome extends ImportOutcome {
@@ -226,6 +228,10 @@ export interface Bookmark {
   name: string;
   side: "local" | "remote";
   path: string;
+  /** Remote bookmarks remember the site they were created from. */
+  siteId?: string | null;
+  /** Sort order of the bookmarked directory. */
+  sort?: PaneSort | null;
 }
 
 export interface AppSettings {

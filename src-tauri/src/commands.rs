@@ -10,15 +10,13 @@ use crate::remote_path;
 use crate::state::AppState;
 use tauri::{Manager, State};
 
-fn now_version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
-}
-
 #[tauri::command]
-pub fn app_info(state: State<'_, AppState>) -> AppInfo {
+pub fn app_info(app: tauri::AppHandle, state: State<'_, AppState>) -> AppInfo {
     AppInfo {
         name: "FileZilla Modern".into(),
-        version: now_version().into(),
+        // Resolved from tauri.conf.json (the only place the version is declared);
+        // never from Cargo.toml, which deliberately carries no version.
+        version: app.package_info().version.to_string(),
         tauri_version: tauri::VERSION.into(),
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
@@ -108,8 +106,31 @@ pub fn sites_export(
     state: State<'_, AppState>,
     path: String,
     include_passwords: bool,
+    overwrite: Option<bool>,
 ) -> AppResult<crate::site_xml::ExportOutcome> {
-    crate::site_xml::export_file(&state.store, std::path::Path::new(&path), include_passwords)
+    let target = std::path::Path::new(&path);
+    if target.is_dir() {
+        return Err(AppError::invalid("The export target is a directory"));
+    }
+    // The webview picks the path through the native save dialog; an existing
+    // file still requires an explicit overwrite flag so a compromised or
+    // buggy frontend cannot silently clobber arbitrary files.
+    if target.exists() && !overwrite.unwrap_or(false) {
+        return Err(AppError::new(
+            "EXISTS",
+            "The target file already exists; pass overwrite only after confirming",
+        ));
+    }
+    if include_passwords {
+        state.logs.warn(
+            "sites",
+            format!(
+                "Exporting site passwords to {} as obfuscated base64 (not encrypted)",
+                target.display()
+            ),
+        );
+    }
+    crate::site_xml::export_file(&state.store, target, include_passwords)
 }
 #[tauri::command]
 pub fn group_create(

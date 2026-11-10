@@ -42,6 +42,7 @@
   "bookmarks.remove": "Remover favorito",
   "bookmarks.noPath": "Não há diretório para salvar",
   "bookmarks.noRemote": "Conecte-se a um site remoto primeiro",
+  "bookmarks.siteMissing": "O site deste favorito não existe mais",
   "search.title": "Pesquisa remota",
   "search.subtitle": "Pesquisar nomes de arquivos recursivamente a partir do diretório atual",
   "search.placeholder": "O nome do arquivo contém…",

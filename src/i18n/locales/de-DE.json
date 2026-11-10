@@ -42,6 +42,7 @@
   "bookmarks.remove": "Lesezeichen entfernen",
   "bookmarks.noPath": "Kein Verzeichnis zum Speichern vorhanden",
   "bookmarks.noRemote": "Zuerst eine Verbindung zu einem Server herstellen",
+  "bookmarks.siteMissing": "Die Site dieses Lesezeichens existiert nicht mehr",
   "search.title": "Dateisuche auf Server",
   "search.subtitle": "Dateinamen ab dem aktuellen Verzeichnis rekursiv durchsuchen",
   "search.placeholder": "Dateiname enthält…",

@@ -42,6 +42,7 @@
   "bookmarks.remove": "Fjern bokmerke",
   "bookmarks.noPath": "Det er ingen mappe å lagre",
   "bookmarks.noRemote": "Koble til en ekstern tjener først",
+  "bookmarks.siteMissing": "Nettstedet for dette bokmerket finnes ikke lenger",
   "search.title": "Eksternt søk",
   "search.subtitle": "Søk rekursivt etter filnavn fra gjeldende mappe",
   "search.placeholder": "Filnavnet inneholder …",

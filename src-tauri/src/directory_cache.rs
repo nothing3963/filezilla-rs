@@ -10,6 +10,9 @@ use crate::models::RemoteEntry;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+/// Upper bound on simultaneously cached listings.
+const MAX_CACHED_LISTINGS: usize = 512;
+
 #[derive(Debug)]
 pub struct DirectoryCache {
     ttl: Duration,
@@ -47,6 +50,19 @@ impl DirectoryCache {
     }
 
     pub fn put(&mut self, path: &str, entries: Vec<RemoteEntry>) {
+        // Bound the cache: when over capacity, drop the oldest listing (by
+        // insertion age) so a long-lived session or a server with endless
+        // distinct paths cannot grow memory without limit.
+        if self.entries.len() >= MAX_CACHED_LISTINGS && !self.entries.contains_key(path) {
+            if let Some(oldest_key) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, listing)| listing.at)
+                .map(|(key, _)| key.clone())
+            {
+                self.entries.remove(&oldest_key);
+            }
+        }
         self.entries.insert(
             path.to_string(),
             CachedListing {

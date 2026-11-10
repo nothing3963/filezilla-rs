@@ -63,7 +63,9 @@ export function SettingsDialog() {
       bodyClassName="flush"
       footer={
         <>
-          <span className="text-[10.5px] text-[var(--text-faint)]">FileZilla Modern {info?.version ?? "0.1.0"}</span>
+          <span className="text-[10.5px] text-[var(--text-faint)]">
+            {info ? `FileZilla Modern ${info.version}` : "FileZilla Modern"}
+          </span>
           <div className="spacer" />
           <Button variant="primary" onClick={closeSettings}>
             {t("dialog.close")}
@@ -355,7 +357,7 @@ export function SettingsDialog() {
                 <tbody>
                   <tr>
                     <td>{t("settings.version")}</td>
-                    <td>{info?.version ?? "0.1.0"}</td>
+                    <td>{info?.version ?? "-"}</td>
                   </tr>
                   <tr>
                     <td>{t("settings.tauriVersion")}</td>

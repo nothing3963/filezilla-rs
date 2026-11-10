@@ -18,7 +18,7 @@ export TEMP="$TMPDIR"
 mkdir -p "$TMPDIR"
 export CARGO_HOME="$PWD/.cache/cargo-home"
 
-VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+VERSION="$(node scripts/get-version.mjs)"
 
 echo "[build] project : $PWD"
 echo "[build] TMP     : $TMPDIR"
@@ -53,7 +53,10 @@ for TARGET in "${TARGETS[@]}"; do
 
   copied=0
 
-  for file in src-tauri/target/$TARGET/release/bundle/dmg/*.dmg; do
+  # Only copy bundles matching the current version: the bundler does not
+  # clean stale bundles from previous builds, so a bare *.dmg glob would
+  # copy them too.
+  for file in src-tauri/target/$TARGET/release/bundle/dmg/*_${VERSION}_*.dmg; do
     [ -e "$file" ] || continue
     cp "$file" "$OUT/"
     copied=$((copied + 1))
@@ -66,7 +69,7 @@ for TARGET in "${TARGETS[@]}"; do
   done
 
   if [ "$copied" -eq 0 ]; then
-    echo "[ERROR] No .dmg or .app bundle was produced for $TARGET." >&2
+    echo "[ERROR] No .dmg or .app bundle for version $VERSION was produced for $TARGET." >&2
     exit 1
   fi
 

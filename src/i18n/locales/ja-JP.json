@@ -42,6 +42,7 @@
   "bookmarks.remove": "ブックマークを削除",
   "bookmarks.noPath": "保存するディレクトリがありません",
   "bookmarks.noRemote": "先にリモート サイトに接続してください",
+  "bookmarks.siteMissing": "このブックマークのサイトは削除されています",
   "search.title": "リモート検索(R)",
   "search.subtitle": "現在のディレクトリからファイル名を再帰的に検索",
   "search.placeholder": "ファイル名に含まれる文字…",

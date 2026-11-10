@@ -42,6 +42,7 @@
   "bookmarks.remove": "移除書籤",
   "bookmarks.noPath": "沒有可儲存的目錄",
   "bookmarks.noRemote": "請先連線至遠端站台",
+  "bookmarks.siteMissing": "該書籤對應的站台已被刪除",
   "search.title": "遠端搜尋(R)",
   "search.subtitle": "從目前目錄遞迴搜尋檔案名稱",
   "search.placeholder": "檔案名稱包含…",

@@ -42,6 +42,7 @@
   "bookmarks.remove": "أزل المفضلة",
   "bookmarks.noPath": "لا يوجد مجلد لحفظه",
   "bookmarks.noRemote": "اتصل بموقع بعيد أولًا",
+  "bookmarks.siteMissing": "لم يعد الموقع الخاص بهذه الإشارة المرجعية موجودًا",
   "search.title": "بحث بعيد",
   "search.subtitle": "البحث التكراري في أسماء الملفات من المجلد الحالي",
   "search.placeholder": "اسم الملف يحتوي على…",

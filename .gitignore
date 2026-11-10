@@ -4,6 +4,7 @@ dist/
 build/
 release/
 *.tsbuildinfo
+*-build.log
 docs/release-*.md
 
 # Rust

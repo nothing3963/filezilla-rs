@@ -42,6 +42,7 @@
   "bookmarks.remove": "Xóa dấu trang",
   "bookmarks.noPath": "Không có thư mục nào để lưu",
   "bookmarks.noRemote": "Hãy kết nối tới một địa chỉ từ xa trước",
+  "bookmarks.siteMissing": "Trang web của dấu trang này không còn tồn tại",
   "search.title": "Tìm kiếm trên máy mạng",
   "search.subtitle": "Tìm kiếm đệ quy tên tệp từ thư mục hiện tại",
   "search.placeholder": "Tên tệp chứa…",

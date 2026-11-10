@@ -42,6 +42,7 @@
   "bookmarks.remove": "Hapus markah",
   "bookmarks.noPath": "Tidak ada direktori untuk disimpan",
   "bookmarks.noRemote": "Hubungkan situs remote terlebih dahulu",
+  "bookmarks.siteMissing": "Situs untuk markah ini tidak lagi tersedia",
   "search.title": "Pencarian remote",
   "search.subtitle": "Cari nama berkas secara rekursif dari direktori saat ini",
   "search.placeholder": "Nama berkas berisi…",

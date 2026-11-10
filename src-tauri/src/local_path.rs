@@ -291,3 +291,89 @@ mod tests {
         assert!(LocalPath::new("C:\\").parent().is_none());
     }
 }
+
+/// Validate a single file-name component received from a remote server before
+/// it is joined onto a local download directory.
+///
+/// A malicious server can send names such as `..\..\windows\x`, `C:\evil`,
+/// `\\server\share`, `CON` or names containing control characters to escape
+/// the chosen directory (zip-slip) or to hit Windows device paths.  Returns
+/// `None` when the name cannot be used safely anywhere under a directory.
+pub fn sanitize_remote_name(name: &str) -> Option<String> {
+    // Windows silently strips trailing dots/spaces; normalise explicitly so
+    // "a." and "a" cannot silently alias different remote entries.
+    let trimmed = name.trim_end_matches([' ', '.']);
+    if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
+        return None;
+    }
+    // Separators, drive prefixes, NTFS alternate data streams and shell
+    // glob/redirection characters.
+    if trimmed.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) {
+        return None;
+    }
+    if trimmed.chars().any(|c| c.is_control()) {
+        return None;
+    }
+    if trimmed.len() > 255 {
+        return None;
+    }
+    // Windows reserved device names apply to the first dot-separated part
+    // ("CON.txt" still opens the console device).
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+        "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    let stem = trimmed.split('.').next().unwrap_or_default().to_ascii_uppercase();
+    if RESERVED.contains(&stem.as_str()) {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+#[cfg(test)]
+mod sanitize_tests {
+    use super::sanitize_remote_name;
+
+    #[test]
+    fn accepts_ordinary_names() {
+        assert_eq!(sanitize_remote_name("report.pdf").as_deref(), Some("report.pdf"));
+        assert_eq!(
+            sanitize_remote_name("my file (1).tar.gz").as_deref(),
+            Some("my file (1).tar.gz")
+        );
+        assert_eq!(sanitize_remote_name("报告 2024").as_deref(), Some("报告 2024"));
+    }
+
+    #[test]
+    fn rejects_traversal_and_absolute_forms() {
+        assert_eq!(sanitize_remote_name(".."), None);
+        assert_eq!(sanitize_remote_name("."), None);
+        assert_eq!(sanitize_remote_name(""), None);
+        assert_eq!(sanitize_remote_name("..\\..\\windows\\x"), None);
+        assert_eq!(sanitize_remote_name("../../etc/passwd"), None);
+        assert_eq!(sanitize_remote_name("C:\\evil"), None);
+        assert_eq!(sanitize_remote_name("\\\\server\\share"), None);
+        assert_eq!(sanitize_remote_name("/absolute"), None);
+        assert_eq!(sanitize_remote_name("stream:evil"), None);
+    }
+
+    #[test]
+    fn rejects_reserved_and_control_names() {
+        assert_eq!(sanitize_remote_name("CON"), None);
+        assert_eq!(sanitize_remote_name("con.txt"), None);
+        assert_eq!(sanitize_remote_name("LPT9"), None);
+        assert_eq!(sanitize_remote_name("nul.dat"), None);
+        assert_eq!(sanitize_remote_name("bad\x00name"), None);
+        assert_eq!(sanitize_remote_name("bad\nname"), None);
+        assert_eq!(sanitize_remote_name("x<>|y"), None);
+        assert_eq!(sanitize_remote_name("x*y?z"), None);
+    }
+
+    #[test]
+    fn trims_windows_hostile_trailing() {
+        // Windows would create "a." as "a" anyway; be explicit and consistent.
+        assert_eq!(sanitize_remote_name("a. "), Some("a".to_string()));
+        assert_eq!(sanitize_remote_name("a. . ."), Some("a".to_string()));
+        assert_eq!(sanitize_remote_name(" . "), None);
+    }
+}

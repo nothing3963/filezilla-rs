@@ -42,6 +42,7 @@
   "bookmarks.remove": "Yer imini kaldır",
   "bookmarks.noPath": "Kaydedilecek klasör yok",
   "bookmarks.noRemote": "Önce uzak bir siteye bağlanın",
+  "bookmarks.siteMissing": "Bu yer iminin sitesi artık mevcut değil",
   "search.title": "Uzak arama",
   "search.subtitle": "Geçerli klasörden dosya adlarını özyinelemeli ara",
   "search.placeholder": "Dosya adı şunu içeriyor…",

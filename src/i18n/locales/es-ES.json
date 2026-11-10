@@ -42,6 +42,7 @@
   "bookmarks.remove": "Quitar marcador",
   "bookmarks.noPath": "No hay ningún directorio que guardar",
   "bookmarks.noRemote": "Conecta primero a un sitio remoto",
+  "bookmarks.siteMissing": "El sitio de este marcador ya no existe",
   "search.title": "Búsqueda remota",
   "search.subtitle": "Buscar nombres de archivo de forma recursiva desde el directorio actual",
   "search.placeholder": "El nombre del archivo contiene…",

@@ -42,6 +42,7 @@
   "bookmarks.remove": "Usuń zakładkę",
   "bookmarks.noPath": "Brak katalogu do zapisania",
   "bookmarks.noRemote": "Najpierw połącz się ze zdalną stroną",
+  "bookmarks.siteMissing": "Witryna tej zakładki już nie istnieje",
   "search.title": "Zdalne wyszukiwanie",
   "search.subtitle": "Rekurencyjnie wyszukuj nazwy plików od bieżącego katalogu",
   "search.placeholder": "Nazwa pliku zawiera…",

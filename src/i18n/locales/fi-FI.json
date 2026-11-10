@@ -42,6 +42,7 @@
   "bookmarks.remove": "Poista kirjanmerkki",
   "bookmarks.noPath": "Tallennettavaa hakemistoa ei ole",
   "bookmarks.noRemote": "Yhdistä ensin palvelinsivustoon",
+  "bookmarks.siteMissing": "Tämän kirjanmerkin sivusto ei ole enää olemassa",
   "search.title": "Etähaku",
   "search.subtitle": "Hae tiedostonimiä rekursiivisesti nykyisestä hakemistosta",
   "search.placeholder": "Tiedostonimi sisältää…",

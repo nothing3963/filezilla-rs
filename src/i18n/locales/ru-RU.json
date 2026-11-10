@@ -42,6 +42,7 @@
   "bookmarks.remove": "Удалить закладку",
   "bookmarks.noPath": "Нет каталога для сохранения",
   "bookmarks.noRemote": "Сначала подключитесь к удаленному сайту",
+  "bookmarks.siteMissing": "Сайт этой закладки больше не существует",
   "search.title": "Удаленный поиск",
   "search.subtitle": "Рекурсивно искать имена файлов в текущем каталоге",
   "search.placeholder": "Имя файла содержит…",

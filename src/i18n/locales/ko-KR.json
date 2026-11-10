@@ -42,6 +42,7 @@
   "bookmarks.remove": "북마크 제거",
   "bookmarks.noPath": "저장할 디렉터리가 없습니다",
   "bookmarks.noRemote": "먼저 원격 사이트에 연결하세요",
+  "bookmarks.siteMissing": "이 북마크의 사이트가 삭제되었습니다",
   "search.title": "원격 검색(R)",
   "search.subtitle": "현재 디렉터리에서 파일 이름을 재귀적으로 검색",
   "search.placeholder": "파일 이름 포함…",

@@ -42,6 +42,7 @@
   "bookmarks.remove": "Odebrat záložku",
   "bookmarks.noPath": "Není žádná složka k uložení",
   "bookmarks.noRemote": "Nejprve se připojte ke vzdálenému místu",
+  "bookmarks.siteMissing": "Stránka této záložky už neexistuje",
   "search.title": "Vzdálené hledání",
   "search.subtitle": "Rekurzivně hledat názvy souborů z aktuální složky",
   "search.placeholder": "Název souboru obsahuje…",

@@ -42,6 +42,7 @@
   "bookmarks.remove": "Supprimer le signet",
   "bookmarks.noPath": "Aucun dossier à enregistrer",
   "bookmarks.noRemote": "Connectez-vous d’abord à un site distant",
+  "bookmarks.siteMissing": "Le site de ce favori n’existe plus",
   "search.title": "Recherche distante",
   "search.subtitle": "Rechercher les noms de fichiers de manière récursive depuis le dossier actuel",
   "search.placeholder": "Le nom de fichier contient…",

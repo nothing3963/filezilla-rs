@@ -42,6 +42,7 @@
   "bookmarks.remove": "Remove bookmark",
   "bookmarks.noPath": "There is no directory to save",
   "bookmarks.noRemote": "Connect a remote site first",
+  "bookmarks.siteMissing": "The site for this bookmark no longer exists",
   "search.title": "Remote search",
   "search.subtitle": "Recursively search file names from the current directory",
   "search.placeholder": "File name contains…",

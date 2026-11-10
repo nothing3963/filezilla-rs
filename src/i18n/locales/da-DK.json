@@ -42,6 +42,7 @@
   "bookmarks.remove": "Fjern bogmærke",
   "bookmarks.noPath": "Der er ingen mappe at gemme",
   "bookmarks.noRemote": "Tilslut først et fjernsted",
+  "bookmarks.siteMissing": "Webstedet for dette bogmærke findes ikke længere",
   "search.title": "Søgning på fjernsted",
   "search.subtitle": "Søg rekursivt i filnavne fra den aktuelle mappe",
   "search.placeholder": "Filnavn indeholder…",

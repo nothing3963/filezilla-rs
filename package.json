@@ -1,9 +1,9 @@
 {
   "name": "filezilla-rs",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
-  "packageManager": "pnpm@11.7.0",
+  "packageManager": "pnpm@12.18.0",
   "engines": {
     "node": ">=20.19"
   },
@@ -16,7 +16,9 @@
     "postinstall": "node scripts/prune-foreign-optionals.mjs",
     "tauri": "tauri",
     "app:dev": "tauri dev",
-    "app:build": "tauri build"
+    "app:build": "tauri build",
+    "version:print": "node scripts/get-version.mjs",
+    "version:set": "node scripts/set-version.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.22",

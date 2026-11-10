@@ -77,7 +77,7 @@ impl client::Handler for ClientHandler {
         match known {
             Some(expected) if expected == fingerprint => Ok(true),
             Some(expected) => {
-                *self.state.mismatch.lock().unwrap() = Some(format!(
+                *self.state.mismatch.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!(
                     "Host key for {}:{} changed (expected {expected}, got {fingerprint}). \
                      Remove the saved key to trust the new one.",
                     self.state.host, self.state.port
@@ -98,7 +98,7 @@ impl client::Handler for ClientHandler {
                     self.state.trusted_new.store(true, Ordering::Relaxed);
                     Ok(true)
                 } else {
-                    *self.state.mismatch.lock().unwrap() = Some(format!(
+                    *self.state.mismatch.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!(
                         "Host key for {}:{} was not trusted ({fingerprint}).",
                         self.state.host, self.state.port
                     ));
@@ -113,7 +113,7 @@ impl client::Handler for ClientHandler {
         banner: &str,
         _session: &mut client::Session,
     ) -> Result<(), Self::Error> {
-        *self.state.banner.lock().unwrap() = Some(banner.trim().to_string());
+        *self.state.banner.lock().unwrap_or_else(|e| e.into_inner()) = Some(banner.trim().to_string());
         Ok(())
     }
 }
@@ -181,7 +181,7 @@ impl SftpRemote {
             )
         })?
         .map_err(|e| {
-            if let Some(message) = mismatch.lock().unwrap().clone() {
+            if let Some(message) = mismatch.lock().unwrap_or_else(|e| e.into_inner()).clone() {
                 AppError::new("HOST_KEY", message)
             } else {
                 AppError::new("NETWORK", format!("SSH connection failed: {e}"))
@@ -247,7 +247,7 @@ impl SftpRemote {
             .await
             .unwrap_or_else(|_| "/".to_string());
 
-        let banner_text = banner.lock().unwrap().clone();
+        let banner_text = banner.lock().unwrap_or_else(|e| e.into_inner()).clone();
         Ok(Box::new(Self {
             session,
             sftp,

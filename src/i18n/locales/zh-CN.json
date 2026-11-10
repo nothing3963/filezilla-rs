@@ -42,6 +42,7 @@
   "bookmarks.remove": "删除书签",
   "bookmarks.noPath": "当前没有可保存的目录",
   "bookmarks.noRemote": "请先连接一个远程站点",
+  "bookmarks.siteMissing": "该书签对应的站点已被删除",
   "search.title": "远程搜索",
   "search.subtitle": "从当前目录递归查找文件名",
   "search.placeholder": "文件名包含…",

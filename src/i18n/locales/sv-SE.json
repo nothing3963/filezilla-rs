@@ -42,6 +42,7 @@
   "bookmarks.remove": "Ta bort bokmärke",
   "bookmarks.noPath": "Det finns ingen katalog att spara",
   "bookmarks.noRemote": "Anslut en fjärrplats först",
+  "bookmarks.siteMissing": "Webbplatsen för det här bokmärket finns inte längre",
   "search.title": "Fjärrsökning",
   "search.subtitle": "Sök filnamn rekursivt från aktuell katalog",
   "search.placeholder": "Filnamnet innehåller…",

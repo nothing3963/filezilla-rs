@@ -1,12 +1,16 @@
+# No version here on purpose: the single source of truth is "version" in
+# tauri.conf.json.  Tauri builds (installer name, NSIS metadata, exe file
+# resources) and the in-app version readout (app.package_info()) both resolve
+# through that config field, and the build scripts read it via
+# scripts/get-version.mjs.  Cargo itself defaults to 0.0.0, but no shipped
+# artifact ever looks at that.  Bump with: pnpm version:set <x.y.z>
 [package]
 name = "filezilla-rs"
-version = "0.1.0"
 description = "Modern Rust + Tauri rewrite of the FileZilla FTP/FTPS/SFTP client"
 authors = ["FileZilla Modern contributors"]
 edition = "2021"
 rust-version = "1.88"
 license = "GPL-3.0-or-later"
-
 [lib]
 name = "filezilla_rs_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -15,7 +19,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["devtools", "tray-icon"] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
@@ -55,6 +59,10 @@ russh-sftp = "3"
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
 window-vibrancy = "0.8"
+# Used to turn off WebView2 browser accelerator keys so in-app shortcuts
+# (F5 refresh, Ctrl+K, ...) reach the DOM instead of reloading the page.
+webview2-com = "0.39"
+windows-core = "0.62"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", default-features = false, features = ["apple-native"] }
@@ -71,5 +79,5 @@ debug = false
 codegen-units = 1
 lto = true
 opt-level = "s"
-panic = "abort"
+# No panic=abort: a panic in one task must unwind, not kill the whole app.
 strip = true
