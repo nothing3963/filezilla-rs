@@ -80,6 +80,36 @@ export function joinRemote(base: string, name: string): string {
   return `${base.replace(/\/+$/, "")}/${name}`;
 }
 
+// Mirror of the Rust `local_path::sanitize_remote_name` (src-tauri/src/local_path.rs).
+// A server-reported entry name may contain `\` or `/` (legal on POSIX), so a
+// naive `<base>\<name>` composition can escape the chosen directory via
+// mid-path `..\`.  Returns a cleaned single-component name, or `null` when the
+// name cannot be represented safely.
+export function sanitizeRemoteName(input: string): string | null {
+  if (!input) return null;
+  // Strip a leading remote-directory prefix, if any slipped through.
+  let name = input.replace(/^[\\/]+/, "");
+  if (!name || name === "." || name === "..") return null;
+  if (name.includes("/") || name.includes("\\")) return null;
+  // Reject reserved Windows device names (CON, NUL, COM1, LPT9, …).
+  if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i.test(name)) return null;
+  // Reject Windows ADS / drive separators and control characters.
+  if (/[\x00-\x1f]/.test(name) || name.includes(":")) return null;
+  // Windows trims trailing dots and spaces — strip them explicitly so
+  // "evil.bat." cannot alias "evil.bat".
+  name = name.replace(/[. ]+$/, "");
+  return name || null;
+}
+
+// Sanitised variant of `joinLocal` for download targets derived from
+// server-controlled names.  Returns `null` instead of an escaping path when
+// the name is unsafe; callers should skip the item.
+export function safeJoinLocal(base: string, name: string): string | null {
+  const safe = sanitizeRemoteName(name);
+  if (safe === null) return null;
+  return joinLocal(base, safe);
+}
+
 export function joinLocal(base: string, name: string): string {
   if (!base) return name;
   const separator = base.includes("\\") || /^[A-Za-z]:/.test(base) ? "\\" : "/";

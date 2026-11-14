@@ -318,7 +318,27 @@ async fn expand_items(
                     // The download target name is usually derived from the
                     // remote entry name; validate it here as well so a single
                     // malicious file name cannot be enqueued either.
-                    let leaf = Path::new(&item.local_path)
+                    //
+                    // A server name may legally contain `\` or `/` (POSIX),
+                    // so the composed `base\<name>` can carry traversal
+                    // segments *before* the leaf, which a leaf-only check
+                    // misses.  Reject any `.`/`..` component anywhere in the
+                    // path and require the leaf to be sanitised.  (The base
+                    // directory is user-chosen; the server only controls the
+                    // final component, but we stay conservative.)
+                    let path = Path::new(&item.local_path);
+                    if path.components().any(|c| {
+                        matches!(
+                            c,
+                            std::path::Component::ParentDir | std::path::Component::CurDir
+                        )
+                    }) {
+                        return Err(AppError::invalid(format!(
+                            "The path for {} cannot be saved safely in the local directory",
+                            item.remote_path
+                        )));
+                    }
+                    let leaf = path
                         .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("");
@@ -595,22 +615,31 @@ impl TransferManager {
         }
         let mut created = Vec::new();
 
+        // Snapshot the in-flight (direction, local, remote) triples once so the
+        // duplicate check is O(1) per item instead of a linear scan that holds
+        // the read lock for the whole enqueue.  New tasks are inserted into the
+        // same set so duplicates *within* this batch are also caught.
+        let mut in_flight: std::collections::HashSet<(TransferDirection, String, String)> = {
+            let tasks = self.tasks.read().unwrap_or_else(|e| e.into_inner());
+            tasks
+                .iter()
+                .filter(|t| !t.status.is_terminal())
+                .map(|t| (t.direction, t.local_path.clone(), t.remote_path.clone()))
+                .collect()
+        };
+
         for item in files {
-            {
-                let tasks = self.tasks.read().unwrap_or_else(|e| e.into_inner());
-                let duplicate = tasks.iter().any(|t| {
-                    !t.status.is_terminal()
-                        && t.direction == item.direction
-                        && t.local_path == item.local_path
-                        && t.remote_path == item.remote_path
-                });
-                drop(tasks);
-                if duplicate {
-                    self.logs
-                        .info("transfer", format!("Already queued: {}", item.remote_path));
-                    continue;
-                }
+            let key = (
+                item.direction,
+                item.local_path.clone(),
+                item.remote_path.clone(),
+            );
+            if in_flight.contains(&key) {
+                self.logs
+                    .info("transfer", format!("Already queued: {}", item.remote_path));
+                continue;
             }
+            in_flight.insert(key);
             let name = item
                 .remote_path
                 .trim_end_matches('/')

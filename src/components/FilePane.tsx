@@ -16,10 +16,11 @@ import {
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, isTauri } from "../api/backend";
 import { DRAG_MIME, parseDragPayload, type DragPayload } from "../lib/drag";
-import { basename, joinLocal, joinRemote, protocolLabel, protocolPort, protocolUsesTls } from "../lib/format";
+import { basename, joinRemote, protocolLabel, protocolPort, protocolUsesTls, safeJoinLocal } from "../lib/format";
 import { cn } from "../lib/cn";
 import { useT } from "../i18n";
 import { DEFAULT_SORT, useAppStore } from "../store/app";
+import type { TransferItem } from "../types";
 import type { LocalEntry, RemoteEntry } from "../types";
 import { Button, IconButton } from "./ui/controls";
 import { ContextMenu, type MenuItem } from "./ui/ContextMenu";
@@ -188,13 +189,16 @@ export function FilePane({ side }: { side: "local" | "remote" }) {
     }
     if (!items.length) return;
     void queueTransferItems(
-      items.map((item) => ({
-        direction: "download",
-        localPath: joinLocal(local.path as string, item.name),
-        remotePath: item.path,
-        size: item.size,
-        isDir: item.isDir,
-      })),
+      items.map((item): TransferItem | null => {
+        const localPath = safeJoinLocal(local.path as string, item.name);
+        return localPath === null ? null : {
+          direction: "download",
+          localPath,
+          remotePath: item.path,
+          size: item.size,
+          isDir: item.isDir,
+        };
+      }).filter((item): item is TransferItem => item !== null),
     );
   };
 

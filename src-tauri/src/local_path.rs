@@ -377,3 +377,86 @@ mod sanitize_tests {
         assert_eq!(sanitize_remote_name(" . "), None);
     }
 }
+
+/// Validate that `full` is exactly `base` plus one sanitised file name, for
+/// download targets derived from server-controlled entry names.
+///
+/// A server can report names containing `\` or `/` (legal on POSIX), so a
+/// naive `<base>\<name>` composition can escape the chosen directory via
+/// mid-path `..\`.  `sanitize_remote_name` only checks a *single* component,
+/// so `Path::file_name()` on the composed path is not enough — the traversal
+/// segments sit before the leaf.  Returns `Err(component)` for the first
+/// offending path component (or the whole path when it is not under `base`).
+///
+/// `base` is trusted (the user chose it); everything after it must pass
+/// [`sanitize_remote_name`].
+pub fn ensure_path_inside(base: &str, full: &str) -> Result<(), String> {
+    let base_norm = base.trim_end_matches(['/', '\\']);
+    let full_trim = full.trim_end_matches(['/', '\\']);
+    // The tail must start with the base followed by a separator.  Compare
+    // case-insensitively on Windows-style separators only; POSIX download
+    // targets also work because the tail check below still validates each
+    // component.
+    let starts_with_base = full_trim.len() > base_norm.len()
+        && full_trim[..base_norm.len()].eq_ignore_ascii_case(base_norm)
+        && matches!(
+            full_trim.as_bytes().get(base_norm.len()),
+            Some(b'/' | b'\\')
+        );
+    if !starts_with_base {
+        return Err(full.to_string());
+    }
+    let tail = &full_trim[base_norm.len() + 1..];
+    for segment in tail.split(['/', '\\']) {
+        if sanitize_remote_name(segment).is_none() {
+            return Err(segment.to_string());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod containment_tests {
+    use super::ensure_path_inside;
+
+    #[test]
+    fn accepts_plain_names() {
+        assert!(ensure_path_inside("C:\\Downloads", "C:\\Downloads\\report.pdf").is_ok());
+        assert!(ensure_path_inside("C:\\Downloads\\", "C:\\Downloads\\my file (1).tar.gz").is_ok());
+        assert!(ensure_path_inside("C:\\Downloads", "c:\\downloads\\报告 2024").is_ok());
+    }
+
+    #[test]
+    fn rejects_traversal_components() {
+        // Mid-path traversal from a hostile server name must be refused even
+        // though the leaf component itself is innocuous.  The error names the
+        // first *unsafe* component (valid segments like `a` pass through).
+        assert_eq!(
+            ensure_path_inside("C:\\Downloads", "C:\\Downloads\\..\\..\\evil"),
+            Err("..".to_string())
+        );
+        assert_eq!(
+            ensure_path_inside("C:\\Downloads", "C:\\Downloads\\a\\..\\evil"),
+            Err("..".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_absolute_and_outside_paths() {
+        assert!(ensure_path_inside("C:\\Downloads", "C:\\Windows\\evil").is_err());
+        assert!(ensure_path_inside("C:\\Downloads", "\\\\server\\share\\evil").is_err());
+        assert!(ensure_path_inside("C:\\Downloads", "C:\\Downloads").is_err());
+    }
+
+    #[test]
+    fn rejects_reserved_and_separator_names() {
+        assert_eq!(
+            ensure_path_inside("C:\\Downloads", "C:\\Downloads\\CON"),
+            Err("CON".to_string())
+        );
+        assert_eq!(
+            ensure_path_inside("C:\\Downloads", "C:\\Downloads\\a:b"),
+            Err("a:b".to_string())
+        );
+    }
+}

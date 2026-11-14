@@ -69,12 +69,18 @@ impl EditManager {
         tokio::fs::create_dir_all(&dir)
             .await
             .map_err(|e| AppError::new("LOCAL_IO", format!("Cannot create edit dir: {e}")))?;
-        let name = remote_path
-            .rsplit('/')
-            .next()
-            .filter(|name| !name.is_empty() && *name != "." && *name != "..")
-            .unwrap_or("remote-file");
-        let local = dir.join(format!("{}-{name}", Uuid::new_v4()));
+        // The remote file name is attacker-controlled: it may contain `\`,
+        // `..`, drive/ADS (`:`) or reserved device names.  The temp path is
+        // `<uuid>-<name>`, so without sanitising an escape such as
+        // `a\..\..\..\Start Menu\Programs\Startup\evil.bat` would resolve past
+        // the edits directory on Windows (lexical `..` removal, no existence
+        // required).  Sanitise the single component and fall back to a fixed
+        // name when it is unusable.
+        let safe_name = crate::local_path::sanitize_remote_name(
+            remote_path.rsplit(['/', '\\']).next().unwrap_or(""),
+        )
+        .unwrap_or_else(|| "remote-file".to_string());
+        let local = dir.join(format!("{}-{safe_name}", Uuid::new_v4()));
         let mut fs = remote::connect(&resolved).await?;
         let control = TransferControl::new(
             CancellationToken::new(),

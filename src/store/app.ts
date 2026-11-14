@@ -8,7 +8,7 @@ import {
   translate,
 } from "../i18n/translate";
 import type { DragPayload } from "../lib/drag";
-import { basename, dirname, joinLocal, joinRemote, naturalCompare, posixName, posixParent, protocolPort } from "../lib/format";
+import { basename, dirname, joinLocal, joinRemote, naturalCompare, posixName, posixParent, protocolPort, safeJoinLocal } from "../lib/format";
 import type {
   AppInfo,
   AppSettings,
@@ -285,6 +285,12 @@ const emptyLocal: LocalPaneState = {
 let bootstrapStarted = false;
 let unlisteners: Unlisten[] = [];
 let persistTimer: number | undefined;
+// Monotonic request ids used to discard stale listing responses: a slow
+// directory listing that resolves after a newer navigation would otherwise
+// clobber the pane with out-of-date rows.  Remote is keyed per tab; local has
+// a single pane.
+const remoteListSeq = new Map<string, number>();
+let localListSeq = 0;
 
 function t(language: string, key: string, vars?: Record<string, string | number>) {
   return translate(language, key, vars);
@@ -718,8 +724,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
       history[index] = path;
     }
 
+    // Only the most recent listing request per tab may commit its result —
+    // a slow earlier listing resolving after a newer navigation must not
+    // clobber the pane.
+    const seq = (remoteListSeq.get(tabId) ?? 0) + 1;
+    remoteListSeq.set(tabId, seq);
+
     try {
       const listing = await api.remoteList(tabId, path);
+      if (remoteListSeq.get(tabId) !== seq) return; // superseded by a newer load
       const entries = sortRemote(listing.entries);
       // A refresh of the same directory keeps the selection so the table can
       // scroll back to the file the user was looking at.
@@ -748,6 +761,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         ),
       }));
     } catch (error) {
+      if (remoteListSeq.get(tabId) !== seq) return; // superseded by a newer load
       const message = errorMessage(error, t(get().settings.language, "pane.error"));
       set((state) => ({
         tabs: state.tabs.map((item) =>
@@ -897,8 +911,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     } else if (mode === "replace") {
       history[index] = path;
     }
+    // Discard a stale local listing the same way as the remote pane.
+    const seq = ++localListSeq;
     try {
       const listing: LocalListing = await api.localList(path, get().settings.showHiddenFiles);
+      if (localListSeq !== seq) return; // superseded by a newer load
       const entries = sortLocal(listing.entries);
       // Keep the selection when refreshing the directory we already show.
       const selected =
@@ -920,6 +937,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         },
       }));
     } catch (error) {
+      if (localListSeq !== seq) return; // superseded by a newer load
       const message = errorMessage(error, t(get().settings.language, "pane.error"));
       set((state) => ({ local: { ...state.local, loading: false, error: message } }));
       get().toast("error", message);
@@ -1148,13 +1166,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
       if (selected.some((entry) => entry.isDir)) {
         get().addLog("info", "transfer", "Expanding selected folders…");
       }
-      const items = selected.map<TransferItem>((entry) => ({
-        direction: "download",
-        localPath: joinLocal(get().local.path as string, entry.name),
-        remotePath: entry.path,
-        size: entry.size,
-        isDir: entry.isDir,
-      }));
+      const base = get().local.path as string;
+      // Server-supplied names could escape the local directory via `..\`;
+      // sanitise each and skip (with a warning) anything unsafe.
+      const items: TransferItem[] = [];
+      for (const entry of selected) {
+        const localPath = safeJoinLocal(base, entry.name);
+        if (localPath === null) {
+          get().addLog("warning", "transfer", `Skipped unsafe download name: ${entry.name}`);
+          continue;
+        }
+        items.push({
+          direction: "download",
+          localPath,
+          remotePath: entry.path,
+          size: entry.size,
+          isDir: entry.isDir,
+        });
+      }
       await get().queueTransferItems(items);
     }
   },
@@ -1222,13 +1251,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
         get().toast("warning", t(language, "toast.noLocalTarget"));
         return;
       }
-      const items = payload.items.map<TransferItem>((item) => ({
-        direction: "download",
-        localPath: joinLocal(targetDir, item.name),
-        remotePath: item.path,
-        size: item.size,
-        isDir: item.isDir,
-      }));
+      const items: TransferItem[] = [];
+      for (const item of payload.items) {
+        const localPath = safeJoinLocal(targetDir, item.name);
+        if (localPath === null) {
+          get().addLog("warning", "transfer", `Skipped unsafe download name: ${item.name}`);
+          continue;
+        }
+        items.push({
+          direction: "download",
+          localPath,
+          remotePath: item.path,
+          size: item.size,
+          isDir: item.isDir,
+        });
+      }
       await get().queueTransferItems(items);
     }
   },

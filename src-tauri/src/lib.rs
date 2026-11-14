@@ -14,7 +14,6 @@ mod proxy;
 mod remote;
 pub mod remote_path;
 mod secrets;
-mod server_path;
 mod session;
 mod sftp;
 mod site_xml;

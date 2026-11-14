@@ -53,7 +53,10 @@ function normalizeError(error: unknown): ApiError {
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
-    if (!isTauri()) {
+    // The mock backend must never ship in production builds: a real user
+    // could otherwise silently operate on fake data if `isTauri()` returned
+    // false.  Allow it only while running `vite dev`.
+    if (import.meta.env.DEV && !isTauri()) {
       return await mockInvoke<T>(command, args);
     }
     return await tauriInvoke<T>(command, args);

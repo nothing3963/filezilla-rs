@@ -72,7 +72,35 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> AppResult<()> {
 
 fn read_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
     match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(value) => value,
+            // A malformed file used to be silently replaced by `Default` on
+            // the next save, destroying the user's sites/settings.  Preserve
+            // the corrupt bytes under a timestamped name and log loudly so
+            // the data can be recovered by hand.
+            Err(error) => {
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let file_name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "data".to_string());
+                let corrupt = path.with_file_name(format!("{file_name}.corrupt-{timestamp}"));
+                let preserved = std::fs::rename(path, &corrupt).is_ok();
+                eprintln!(
+                    "Failed to parse {}: {error}.{}",
+                    path.display(),
+                    if preserved {
+                        format!(" Preserved the corrupt file at {}", corrupt.display())
+                    } else {
+                        " Could not preserve the corrupt file; it will be overwritten on the next save".to_string()
+                    }
+                );
+                T::default()
+            }
+        },
         Err(_) => T::default(),
     }
 }
